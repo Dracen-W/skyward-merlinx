@@ -1,0 +1,53 @@
+[device]
+codename = "merlinx"
+brand = "Redmi"
+model = "Redmi Note 9 (Global)"
+ab = true
+soc = { hans = "Helio G85 (MT6768/6769Z)", hant = "Helio G85 (MT6768/6769Z)", en = "Helio G85 (MT6768/6769Z)" }
+os_version_prop = "ro.build.version.release"
+# ro.build.version.release replace the MIOS version.
+
+[display]
+width = 1080
+height = 2340
+density = 430
+diagonal = 6.53
+corner_radius = 120
+
+[modules]
+sources = ["vendor"]
+# Merlinx uses panel FT8197 from FocalTech.
+# 1 modules under /vendor/firmware/.
+# Novatek may also be one of the panel supplier of merlinx, if problem exist on panel, may consider to add novatek into load.
+# Novatek load list, "novatek_ts_72d_fw", "novatek_ts_72d_mp", "novatek_ts_fw", "novatek_ts_g6_fw", "novatek_ts_g6_mp", "novatek_ts_mp".
+load = ["focaltech_ts_fw_xinli"]
+
+# The secure world reaches back into Android through the listeners this
+# daemon registers; without them the key service cannot use any key.
+[[service]]
+path = "/vendor/bin/teei_daemon"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_property = "vendor.sys.listeners.registered"
+user = "root"
+groups = ["root", "drmrpc"]
+
+# The key service, which is the only thing that can use the keys the phone
+# wrapped in hardware. The same program serves the secure clock and the
+# shared secret, which the phone describes apart from it.
+# Keymaster：Beanpod HIDL 4.1
+[[service]]
+path = "/vendor/bin/hw/android.hardware.keymaster@4.1-service.beanpod"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
+ready_service = "android.hardware.keymaster@4.1::IKeymasterDevice/default"
+user = "system"
+groups = ["system", "drmrpc"]
+
+# The credential service: it is what the secure world has check the secret
+# behind a screen lock, and the only thing that can hand out the note the
+# key service wants before it will use a key that secret guards.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
+ready_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
+user = "system"
+groups = ["system"]
