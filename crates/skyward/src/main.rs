@@ -374,7 +374,8 @@ fn main() -> Result<()> {
         Cmd::Data { credential, close: false } => {
             use skyward_crypto::data;
             let binder = skyward_binder::driver::Binder::open()?;
-            let service = skyward_crypto::keymint::KeyMint::open(&binder)?;
+            let hardware = skyward_binder::driver::Binder::hardware()?;
+            let service = skyward_crypto::keymint::KeyMint::open(&binder, &hardware)?;
             let opening = data::open_without_credential(&service)?;
             match &opening.mounted {
                 Some(mounted) => {
