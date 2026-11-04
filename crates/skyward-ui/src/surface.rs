@@ -73,6 +73,14 @@ mod tests {
     }
 }
 
+/// Byte order of the scanout buffer against the canvas's RGBA.
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug)]
+enum Order {
+    Rgba,
+    Bgra,
+}
+
 #[cfg(target_os = "android")]
 pub mod kms {
     use super::*;
@@ -126,13 +134,6 @@ pub mod kms {
         fn offsets(&self) -> [u32; 4] {
             [0; 4]
         }
-    }
-
-    /// Byte order of the scanout buffer against the canvas's RGBA.
-    #[derive(Clone, Copy, Debug)]
-    enum Order {
-        Rgba,
-        Bgra,
     }
 
     struct Buf {
@@ -615,6 +616,263 @@ pub mod kms {
                 self.flipping = false;
             }
             Ok(())
+        }
+    }
+}
+
+/// The framebuffer interface, as MediaTek's display driver exposes it. The
+/// recovery's screen is a plain framebuffer there, with no KMS device: the
+/// driver hands out /dev/graphics/fb0, which is mapped and shown a buffer at
+/// a time through FBIOPAN_DISPLAY.
+#[cfg(target_os = "android")]
+pub mod fb {
+    use super::*;
+    use anyhow::{bail, Context};
+    use std::fs::{File, OpenOptions};
+    use std::os::fd::{AsRawFd, RawFd};
+
+    const FBIOGET_VSCREENINFO: libc::c_int = 0x4600;
+    const FBIOGET_FSCREENINFO: libc::c_int = 0x4602;
+    const FBIOPAN_DISPLAY: libc::c_int = 0x4606;
+    const FBIOBLANK: libc::c_int = 0x4611;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct Bitfield {
+        offset: u32,
+        length: u32,
+        msb_right: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct VarScreeninfo {
+        xres: u32,
+        yres: u32,
+        xres_virtual: u32,
+        yres_virtual: u32,
+        xoffset: u32,
+        yoffset: u32,
+        bits_per_pixel: u32,
+        grayscale: u32,
+        red: Bitfield,
+        green: Bitfield,
+        blue: Bitfield,
+        transp: Bitfield,
+        nonstd: u32,
+        activate: u32,
+        height: u32,
+        width: u32,
+        accel_flags: u32,
+        pixclock: u32,
+        left_margin: u32,
+        right_margin: u32,
+        upper_margin: u32,
+        lower_margin: u32,
+        hsync_len: u32,
+        vsync_len: u32,
+        sync: u32,
+        vmode: u32,
+        rotate: u32,
+        colorspace: u32,
+        reserved: [u32; 4],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct FixScreeninfo {
+        id: [u8; 16],
+        smem_start: u64,
+        smem_len: u32,
+        type_: u32,
+        type_aux: u32,
+        visual: u32,
+        xpanstep: u16,
+        ypanstep: u16,
+        ywrapstep: u16,
+        line_length: u32,
+        mmio_start: u64,
+        mmio_len: u32,
+        accel: u32,
+        capabilities: u16,
+        reserved: [u16; 2],
+    }
+
+    fn ioctl<T>(fd: RawFd, request: libc::c_int, arg: &mut T, what: &str) -> Result<()> {
+        if unsafe { libc::ioctl(fd, request, arg as *mut T) } < 0 {
+            Err(std::io::Error::last_os_error()).with_context(|| what.to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Direct scanout through the framebuffer, two or three buffers taken in
+    /// turn where the driver gives the room; the driver shows one with
+    /// FBIOPAN_DISPLAY and waits for it to reach the panel.
+    pub struct FramebufferSurface {
+        file: File,
+        map: *mut u8,
+        len: usize,
+        w: u32,
+        h: u32,
+        pitch: usize,
+        order: Order,
+        /// The first line of each buffer, in lines from the start of the map.
+        offsets: Vec<u32>,
+        /// The buffer the next frame goes into.
+        back: usize,
+        var: VarScreeninfo,
+        summary: String,
+    }
+
+    impl FramebufferSurface {
+        pub fn open(path: &str) -> Result<Self> {
+            let file = OpenOptions::new().read(true).write(true).open(path).with_context(|| format!("open {path}"))?;
+            let fd = file.as_raw_fd();
+            let mut var = VarScreeninfo::default();
+            ioctl(fd, FBIOGET_VSCREENINFO, &mut var, "read the framebuffer mode")?;
+            if var.bits_per_pixel != 32 {
+                bail!("the framebuffer is {} bits per pixel, not 32", var.bits_per_pixel);
+            }
+            let order = match (var.red.offset, var.green.offset, var.blue.offset, var.red.length, var.green.length, var.blue.length) {
+                (0, 8, 16, 8, 8, 8) => Order::Rgba,
+                (16, 8, 0, 8, 8, 8) => Order::Bgra,
+                _ => bail!(
+                    "the framebuffer's channels are red {} at {}, green {} at {}, blue {} at {}",
+                    var.red.length,
+                    var.red.offset,
+                    var.green.length,
+                    var.green.offset,
+                    var.blue.length,
+                    var.blue.offset
+                ),
+            };
+            let mut fix = FixScreeninfo::default();
+            let pitch = match ioctl(fd, FBIOGET_FSCREENINFO, &mut fix, "read the framebuffer layout") {
+                Ok(()) if fix.line_length != 0 => fix.line_length as usize,
+                _ => var.xres_virtual as usize * 4,
+            };
+            let (w, h) = (var.xres, var.yres);
+            if w == 0 || h == 0 {
+                bail!("the framebuffer is {w}x{h}");
+            }
+            if pitch < w as usize * 4 {
+                bail!("the framebuffer's line is {pitch} bytes, shorter than {w} pixels of 32 bits");
+            }
+            let buffers = (var.yres_virtual / h).clamp(1, 3) as usize;
+            let offsets: Vec<u32> = (0..buffers).map(|i| i as u32 * h).collect();
+            let len = pitch.checked_mul(var.yres_virtual as usize).context("the framebuffer is too large to map")?;
+            let map = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) };
+            if map == libc::MAP_FAILED {
+                return Err(std::io::Error::last_os_error()).context("map the framebuffer");
+            }
+            // The bootloader may have blanked it; the pages light it again.
+            unsafe { libc::ioctl(fd, FBIOBLANK, 0 as libc::c_int) };
+            let mut surface = FramebufferSurface {
+                file,
+                map: map.cast(),
+                len,
+                w,
+                h,
+                pitch,
+                order,
+                offsets,
+                back: 1 % buffers,
+                var,
+                summary: String::new(),
+            };
+            // The bootloader's buffer is the one showing; start with the one
+            // after it so the first frame does not overwrite what is read.
+            let _ = surface.pan(0);
+            surface.summary = format!("framebuffer {w}x{h} {buffers} buffers, pitch {pitch}, {order:?}");
+            Ok(surface)
+        }
+
+        fn pan(&mut self, yoffset: u32) -> Result<()> {
+            self.var.xoffset = 0;
+            self.var.yoffset = yoffset;
+            ioctl(self.file.as_raw_fd(), FBIOPAN_DISPLAY, &mut self.var, "show the frame")
+        }
+
+        fn copy(&mut self, canvas: &Canvas, offset: u32) {
+            let row = self.w as usize * 4;
+            let start = offset as usize * self.pitch;
+            let dst = unsafe { std::slice::from_raw_parts_mut(self.map.add(start), self.len - start) };
+            for y in 0..self.h as usize {
+                let src = &canvas.data[y * row..(y + 1) * row];
+                let out = &mut dst[y * self.pitch..y * self.pitch + row];
+                match self.order {
+                    Order::Rgba => out.copy_from_slice(src),
+                    Order::Bgra => {
+                        for (o, s) in out.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+                            *o = [s[2], s[1], s[0], s[3]];
+                        }
+                    }
+                }
+            }
+        }
+
+        pub fn describe(&self) -> &str {
+            &self.summary
+        }
+    }
+
+    impl Drop for FramebufferSurface {
+        fn drop(&mut self) {
+            unsafe { libc::munmap(self.map.cast(), self.len) };
+        }
+    }
+
+    impl Surface for FramebufferSurface {
+        fn size(&self) -> (u32, u32) {
+            (self.w, self.h)
+        }
+
+        fn present(&mut self, canvas: &Canvas) -> Result<()> {
+            if (canvas.w, canvas.h) != (self.w, self.h) {
+                return Err(anyhow::anyhow!("canvas {}x{} does not match the display {}x{}", canvas.w, canvas.h, self.w, self.h));
+            }
+            let offset = self.offsets[self.back];
+            self.copy(canvas, offset);
+            if self.offsets.len() > 1 {
+                self.pan(offset).context("show the frame")?;
+            }
+            self.back = (self.back + 1) % self.offsets.len();
+            Ok(())
+        }
+
+        fn settle(&mut self) -> Result<()> {
+            // Showing a buffer waits for it to reach the panel.
+            Ok(())
+        }
+    }
+}
+
+/// The phone's display: a KMS card where it has one, the framebuffer where
+/// it has that instead, as MediaTek's display driver gives it.
+#[cfg(target_os = "android")]
+pub fn open() -> Result<(Box<dyn Surface>, String)> {
+    let mut why = Vec::new();
+    for path in ["/dev/dri/card0", "/dev/dri/card1"] {
+        if !std::path::Path::new(path).exists() {
+            continue;
+        }
+        match kms::KmsSurface::open(path) {
+            Ok(surface) => {
+                let summary = surface.describe().to_string();
+                return Ok((Box::new(surface), summary));
+            }
+            Err(e) => why.push(format!("{path}: {e:#}")),
+        }
+    }
+    match fb::FramebufferSurface::open("/dev/graphics/fb0") {
+        Ok(surface) => {
+            let summary = surface.describe().to_string();
+            Ok((Box::new(surface), summary))
+        }
+        Err(e) => {
+            why.push(format!("/dev/graphics/fb0: {e:#}"));
+            Err(anyhow::anyhow!("no display: {}", why.join("; ")))
         }
     }
 }

@@ -34,8 +34,7 @@ use skyward_ui::app::{
     FileRow, FileTask, FsAction, FsRow, Have, Held, ItemEnd, ItemState, JobEnd, Keys, MountFailure, Part, PartKind, PartStop, Place,
     RenameRefused, Screen, Shot, Target, UsbDrive, UsbLink, Wipe, DATA_OPENING, DATA_PARTITION, DOWNLOADS, INSTALL_UNFINISHED, USB_DRIVE,
 };
-use skyward_ui::surface::kms::KmsSurface;
-use skyward_ui::{Canvas, Fonts, Lang, Surface};
+use skyward_ui::{Canvas, Fonts, Lang};
 use skyward_vab::{Merge, Standing};
 use std::collections::{BTreeSet, VecDeque};
 use std::fs;
@@ -1038,9 +1037,9 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
     }
     let mut info = skyward_info::collect(cfg)?;
     let fonts = Fonts::load(font, 0, mono)?;
-    let mut surface = KmsSurface::open("/dev/dri/card0")?;
+    let (mut surface, display) = skyward_ui::surface::open()?;
     let (w, h) = surface.size();
-    eprintln!("display {}", surface.describe());
+    eprintln!("display {display}");
     let mut inputs = Inputs::open(w, h, cfg.touch.writes.clone())?;
     let started = Instant::now();
     let mut touch_known = false;
