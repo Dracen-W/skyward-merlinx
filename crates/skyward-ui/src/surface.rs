@@ -759,7 +759,11 @@ pub mod fb {
             if pitch < w as usize * 4 {
                 bail!("the framebuffer's line is {pitch} bytes, shorter than {w} pixels of 32 bits");
             }
-            let buffers = (var.yres_virtual / h).clamp(1, 3) as usize;
+            // Two buffers are enough: showing one waits for it to reach the
+            // panel, so the other is free to draw the next frame into. More
+            // would depend on where the driver starts each one, which its
+            // virtual height does not say.
+            let buffers = (var.yres_virtual / h).clamp(1, 2) as usize;
             let offsets: Vec<u32> = (0..buffers).map(|i| i as u32 * h).collect();
             let len = pitch.checked_mul(var.yres_virtual as usize).context("the framebuffer is too large to map")?;
             let map = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) };
