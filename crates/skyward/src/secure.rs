@@ -9,8 +9,17 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// Where a phone keeps the bundles of shared libraries its own partitions
-/// were built against.
-const BUNDLE_DIRS: [&str; 4] = ["/mnt/system_ext/apex", "/mnt/system/system/apex", "/mnt/product/apex", "/vendor/apex"];
+/// were built against, at the points the recovery mounts those partitions:
+/// a recovery that carries a mount point directory of its own, such as
+/// `/system_ext`, keeps the partition there rather than under `/mnt`.
+fn bundle_dirs() -> [PathBuf; 4] {
+    [
+        skyward_vab::mount_point("system_ext").join("apex"),
+        skyward_vab::mount_point("system").join("system/apex"),
+        skyward_vab::mount_point("product").join("apex"),
+        skyward_vab::mount_point("vendor").join("apex"),
+    ]
+}
 
 /// The file inside a bundle that holds its filesystem. It is stored whole,
 /// so the bundle can be opened where it lies.
@@ -170,7 +179,7 @@ fn bundle(name: &str) -> Result<Option<PathBuf>> {
     if skyward_block::mount::is_mount_point(&at)? {
         return Ok(Some(at));
     }
-    let Some(file) = BUNDLE_DIRS.iter().map(|d| Path::new(d).join(format!("{name}.apex"))).find(|p| p.is_file()) else {
+    let Some(file) = bundle_dirs().iter().map(|d| d.join(format!("{name}.apex"))).find(|p| p.is_file()) else {
         return Ok(None);
     };
     let (offset, length) = image(&file)?;
