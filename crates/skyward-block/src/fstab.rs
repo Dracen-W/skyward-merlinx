@@ -4,8 +4,19 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-/// Where the phone's own partitions keep the table.
+/// The folders a phone's own partitions keep their tables in.
+const DIRS: [&str; 2] = ["/vendor/etc", "/odm/etc"];
+
+/// Where a phone of a chip maker that names its table after the chip keeps
+/// it. A phone of another maker names the table after its hardware
+/// instead, such as `fstab.mt6768`, which [`named`] builds.
 pub const FILES: [&str; 2] = ["/vendor/etc/fstab.qcom", "/odm/etc/fstab.qcom"];
+
+/// Where a phone whose hardware is `hardware` keeps its table, in each
+/// folder a phone's own partitions keep one.
+pub fn named(hardware: &str) -> [String; 2] {
+    DIRS.map(|dir| format!("{dir}/fstab.{hardware}"))
+}
 
 /// One filesystem the phone knows about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,15 +62,50 @@ pub fn entries(text: &str) -> Vec<Entry> {
     out
 }
 
+/// Which of the tables found are the phone's own: the ones named after the
+/// hardware the phone booted as, or failing those the ones a chip maker's
+/// own name gives, or failing those any table in the folders.
+fn choose(named: Vec<String>, legacy: Vec<String>, scanned: Vec<String>) -> Vec<String> {
+    if !named.is_empty() {
+        named
+    } else if !legacy.is_empty() {
+        legacy
+    } else {
+        scanned
+    }
+}
+
+/// Every table a folder holds, in a settled order.
+fn scanned() -> Vec<String> {
+    let mut out = Vec::new();
+    for dir in DIRS {
+        // A folder that cannot be read is no worse than one that is not
+        // there: the other folder and the named tables remain.
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("fstab.")) && path.is_file() {
+                out.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Every entry of the phone's own table, read from wherever the table is.
 fn table() -> Result<Vec<Entry>> {
+    let hardware = crate::boot_param("androidboot.hardware")?;
+    let named: Vec<String> = hardware
+        .iter()
+        .flat_map(|h| named(h))
+        .filter(|p| Path::new(p).is_file())
+        .collect();
+    let legacy: Vec<String> = FILES.iter().filter(|p| Path::new(p).is_file()).map(|p| p.to_string()).collect();
+    let files = choose(named, legacy, scanned());
     let mut out = Vec::new();
-    for file in FILES {
-        let text = match std::fs::read_to_string(file) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e).with_context(|| format!("read {file}")),
-        };
+    for file in files {
+        let text = std::fs::read_to_string(&file).with_context(|| format!("read {file}"))?;
         out.extend(entries(&text));
     }
     Ok(out)
@@ -165,5 +211,20 @@ mod tests {
     fn comments_and_short_lines_are_passed_over() {
         assert!(entries("# nothing\n\n/dev/x /y f2fs rw\n").is_empty());
         assert_eq!(entries(TABLE).len(), 3);
+    }
+
+    #[test]
+    fn a_table_is_named_after_the_hardware_the_phone_booted_as() {
+        assert_eq!(named("mt6768"), ["/vendor/etc/fstab.mt6768", "/odm/etc/fstab.mt6768"]);
+    }
+
+    #[test]
+    fn the_table_named_after_the_hardware_wins_over_any_other() {
+        let hardware = vec!["/vendor/etc/fstab.mt6768".to_string()];
+        let chip = vec!["/vendor/etc/fstab.qcom".to_string()];
+        let any = vec!["/vendor/etc/fstab.other".to_string()];
+        assert_eq!(choose(hardware.clone(), chip.clone(), any.clone()), hardware);
+        assert_eq!(choose(Vec::new(), chip.clone(), any.clone()), chip);
+        assert_eq!(choose(Vec::new(), Vec::new(), any.clone()), any);
     }
 }
