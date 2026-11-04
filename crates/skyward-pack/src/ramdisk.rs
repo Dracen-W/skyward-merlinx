@@ -28,18 +28,35 @@ impl Entry {
     }
 }
 
+/// How an initramfs is compressed inside a boot image. The ramdisk-only
+/// layout uses LZ4; the older layout a phone without slots carries usually
+/// uses gzip, which the kernel unpacks just as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compression {
+    Lz4Legacy,
+    Gzip,
+}
+
 /// An initramfs held in memory, so entries keep their owners, modes and
 /// device numbers exactly as the archive had them.
 pub struct Ramdisk {
     pub entries: Vec<Entry>,
+    /// The compression the archive came in, so that a repack keeps it.
+    pub compression: Compression,
 }
 
 impl Ramdisk {
-    /// Unpack an LZ4 (legacy framing) compressed newc archive, as Android
-    /// boot images carry.
+    /// Unpack a compressed newc archive, as Android boot images carry: LZ4
+    /// (legacy framing) or, in the older layout, gzip.
     pub fn decode(compressed: &[u8]) -> Result<Self> {
         let mut cpio = Vec::new();
-        lz4_flex::frame::FrameDecoder::new(compressed).read_to_end(&mut cpio).context("lz4 decode")?;
+        let compression = if compressed.starts_with(&[0x1f, 0x8b]) {
+            flate2::read::GzDecoder::new(compressed).read_to_end(&mut cpio).context("gzip decode")?;
+            Compression::Gzip
+        } else {
+            lz4_flex::frame::FrameDecoder::new(compressed).read_to_end(&mut cpio).context("lz4 decode")?;
+            Compression::Lz4Legacy
+        };
         let mut entries = Vec::new();
         let mut rest = Cursor::new(cpio.as_slice());
         loop {
@@ -63,7 +80,7 @@ impl Ramdisk {
             entries.push(entry);
             rest = r.finish().context("cpio entry end")?;
         }
-        Ok(Ramdisk { entries })
+        Ok(Ramdisk { entries, compression })
     }
 
     /// Pack as a newc archive compressed the way AOSP packs boot ramdisks,
@@ -89,7 +106,10 @@ impl Ramdisk {
             w.finish()?;
         }
         cpio::newc::trailer(&mut cpio)?;
-        lz4_legacy(&cpio)
+        match self.compression {
+            Compression::Lz4Legacy => lz4_legacy(&cpio),
+            Compression::Gzip => gzip(&cpio),
+        }
     }
 
     pub fn find(&self, name: &str) -> Option<&Entry> {
@@ -154,13 +174,20 @@ fn lz4_legacy(input: &[u8]) -> Result<Vec<u8>> {
     Ok(out.stdout)
 }
 
+fn gzip(input: &[u8]) -> Result<Vec<u8>> {
+    use flate2::write::GzEncoder;
+    let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder.write_all(input).context("gzip encode")?;
+    encoder.finish().context("gzip encode")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn round_trip_keeps_metadata() {
-        let mut rd = Ramdisk { entries: Vec::new() };
+        let mut rd = Ramdisk { entries: Vec::new(), compression: Compression::Lz4Legacy };
         rd.add("system/bin/recovery", 0o750, b"binary".to_vec()).unwrap();
         rd.entries.push(Entry {
             name: "dev/console".into(),
