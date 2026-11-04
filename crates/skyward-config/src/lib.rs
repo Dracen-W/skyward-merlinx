@@ -337,8 +337,9 @@ pub struct Service {
     /// once it has ended, and it has to end well.
     #[serde(default)]
     pub oneshot: bool,
-    /// A property the program sets once it is ready for the rest. Programs
-    /// are started in the order they are written, and one that says it has
+    /// A property the program sets once it is ready for the rest, either
+    /// by name for any value or as `name=value` for one. Programs are
+    /// started in the order they are written, and one that says it has
     /// something to wait for holds up the ones after it.
     #[serde(default)]
     pub ready_property: Option<String>,
@@ -507,6 +508,17 @@ impl DeviceConfig {
             ensure!(s.user.is_none() || !s.groups.is_empty(), "[[service]] {}: a program given a user is given its group too", s.path);
             for name in s.user.iter().chain(&s.groups) {
                 ensure!(!name.is_empty() && !name.contains(char::is_whitespace), "[[service]] {}: {name:?} is not an account's name", s.path);
+            }
+            if let Some(said) = &s.ready_property {
+                let (name, value) = said.split_once('=').map_or((said.as_str(), None), |(name, value)| (name, Some(value)));
+                ensure!(!name.is_empty() && !name.contains(char::is_whitespace), "[[service]] {}: {name:?} is not a property's name", s.path);
+                if let Some(value) = value {
+                    ensure!(
+                        !value.is_empty() && !value.contains(char::is_whitespace),
+                        "[[service]] {}: {value:?} is not a property's value",
+                        s.path
+                    );
+                }
             }
             for name in &s.capabilities {
                 ensure!(capability(name).is_some(), "[[service]] {}: {name} is not a capability init knows", s.path);
@@ -757,6 +769,18 @@ mod tests {
         assert!(DeviceConfig::parse(&format!("{base}description = \"/vendor/etc/a.xml\"\n")).is_err());
         let kept = DeviceConfig::parse("[device]\ncodename = \"x\"\n[[service]]\npath = \"/vendor/bin/a\"\n").unwrap();
         assert!(!kept.services[0].oneshot && kept.services[0].args.is_empty(), "a program is kept running unless it says otherwise");
+    }
+
+    #[test]
+    fn a_property_waited_on_is_named_either_alone_or_with_its_value() {
+        let base = "[device]\ncodename = \"x\"\n[[service]]\npath = \"/vendor/bin/a\"\n";
+        let any = DeviceConfig::parse(&format!("{base}ready_property = \"vendor.a\"\n")).unwrap();
+        assert_eq!(any.services[0].ready_property.as_deref(), Some("vendor.a"));
+        let one = DeviceConfig::parse(&format!("{base}ready_property = \"vendor.a=INIT_OK\"\n")).unwrap();
+        assert_eq!(one.services[0].ready_property.as_deref(), Some("vendor.a=INIT_OK"));
+        for bad in ["", "=INIT_OK", "vendor.a=", "vendor.a=two words"] {
+            assert!(DeviceConfig::parse(&format!("{base}ready_property = \"{bad}\"\n")).is_err(), "{bad:?} is refused");
+        }
     }
 
     #[test]

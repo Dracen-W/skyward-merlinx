@@ -165,8 +165,9 @@ fn ready(s: &Service) -> Result<()> {
     };
     let until = Instant::now() + READY_TIMEOUT;
     loop {
-        if let Some(name) = &s.ready_property {
-            if skyward_sys::prop(name).is_some_and(|v| !v.is_empty()) {
+        if let Some(said) = &s.ready_property {
+            let (name, value) = said.split_once('=').map_or((said.as_str(), None), |(name, value)| (name, Some(value)));
+            if skyward_sys::prop(name).is_some_and(|v| value.map_or(!v.is_empty(), |value| v == value)) {
                 return Ok(());
             }
         }
