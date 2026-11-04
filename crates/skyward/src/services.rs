@@ -21,6 +21,11 @@ const RESTART_DELAY: Duration = Duration::from_secs(1);
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const READY_POLL: Duration = Duration::from_millis(100);
 
+/// How long a program that runs once gets to end. A vendor helper that waits
+/// on hardware the recovery never brings up would otherwise hold up the
+/// screen, which does not need it.
+const ONESHOT_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Where the kernel says the highest capability it knows.
 const CAP_LAST_CAP: &str = "/proc/sys/kernel/cap_last_cap";
 
@@ -32,9 +37,10 @@ const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 /// written, and one that says what it will be ready with holds up those
 /// after it until it is. A program still running from an earlier instance
 /// of the recovery service is waited on instead of started twice. A
-/// program that runs once is run to its end where it stands in that order.
-/// Each runs as the user, in the groups and with the capabilities the
-/// phone's own init gives it.
+/// program that runs once is run to its end where it stands in that order,
+/// and one that has not ended in [`ONESHOT_TIMEOUT`] is stopped so it does
+/// not hold up the screen. Each runs as the user, in the groups and with the
+/// capabilities the phone's own init gives it.
 ///
 /// `libraries` is a directory of shared libraries every one of them may
 /// need, searched after whatever it names itself.
@@ -50,7 +56,10 @@ pub fn start(services: &[Service], libraries: Option<&Path>) -> Result<()> {
         }
         let who = Credentials::of(&s, &known)?;
         if s.oneshot {
-            let status = command(&s, &who).status().with_context(|| format!("run {}", s.path))?;
+            let Some(status) = run_once(&s, &who)? else {
+                skyward_sys::kmsg(&format!("{} did not end in {} seconds", s.path, ONESHOT_TIMEOUT.as_secs()))?;
+                continue;
+            };
             ensure!(status.success(), "{} {} ended: {status}", s.path, s.args.join(" "));
             skyward_sys::kmsg(&format!("ran {} {}", s.path, s.args.join(" ")))?;
             continue;
@@ -205,6 +214,25 @@ fn supervise(s: &Service, who: &Credentials) -> ! {
         if started.elapsed() < RESTART_DELAY {
             thread::sleep(RESTART_DELAY);
         }
+    }
+}
+
+/// Run a program that runs once to its end and give what it ended with; a
+/// program still running after [`ONESHOT_TIMEOUT`] is stopped, and `None` is
+/// given.
+fn run_once(s: &Service, who: &Credentials) -> Result<Option<std::process::ExitStatus>> {
+    let mut child = command(s, who).spawn().with_context(|| format!("start {}", s.path))?;
+    let until = Instant::now() + ONESHOT_TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait().with_context(|| format!("wait for {}", s.path))? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= until {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        thread::sleep(READY_POLL);
     }
 }
 
