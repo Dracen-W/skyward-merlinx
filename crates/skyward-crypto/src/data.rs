@@ -51,9 +51,16 @@ pub struct Encryption {
 }
 
 impl Encryption {
-    /// Read what an entry of the phone's own table says.
+    /// Read what an entry of the phone's own table says. A phone that names
+    /// a key directory but no cipher has its data encrypted whole with the
+    /// cipher vold takes when none is named, and with the key as the
+    /// hardware holds it rather than one wrapped again by it.
     pub fn of(entry: &Entry) -> Result<Encryption> {
-        let said = entry.extra("metadata_encryption").context("the phone says its data partition is not encrypted whole")?;
+        let said = match entry.extra("metadata_encryption") {
+            Some(said) => said,
+            None if entry.extra("keydirectory").is_some() => "aes-256-xts",
+            None => anyhow::bail!("the phone says its data partition is not encrypted whole"),
+        };
         let (name, rest) = said.split_once(':').unwrap_or((said, ""));
         let cipher = CIPHERS
             .iter()
@@ -596,6 +603,12 @@ mod tests {
         assert_eq!(Encryption::of(&e).unwrap(), Encryption { cipher: "aes-xts-plain64".into(), wrapped: true });
         let plain = entry("metadata_encryption=adiantum");
         assert_eq!(Encryption::of(&plain).unwrap(), Encryption { cipher: "xchacha12,aes-adiantum-plain64".into(), wrapped: false });
+    }
+
+    #[test]
+    fn a_key_directory_alone_means_the_default_cipher_and_the_key_as_it_is() {
+        let e = entry("keydirectory=/metadata/vold/metadata_encryption");
+        assert_eq!(Encryption::of(&e).unwrap(), Encryption { cipher: "aes-xts-plain64".into(), wrapped: false });
     }
 
     #[test]

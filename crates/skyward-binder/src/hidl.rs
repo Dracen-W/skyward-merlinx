@@ -67,7 +67,10 @@ impl Message {
     /// A run of bytes: the frame that says where they are, then an address
     /// for the bytes themselves.
     pub fn bytes(&mut self, value: &[u8]) {
-        let at = self.keep(value.to_vec());
+        let at = match value.is_empty() {
+            true => 0,
+            false => self.keep(value.to_vec()),
+        };
         self.framed(at, value.len(), value.len());
     }
 
@@ -91,29 +94,59 @@ impl Message {
     /// The pair of addresses a run of bytes is written as: the frame, and
     /// then the bytes it points at.
     fn framed(&mut self, at: u64, count: usize, length: usize) {
+        let parent = self.vector_header_at(count as u32, at);
+        self.address(at, length, Some((parent, 0)));
+    }
+
+    /// The frame that opens a vector: how many values there are, and, once
+    /// the driver has been through it, where they lie. The answer is which
+    /// address the frame is, for the values inside it to name.
+    pub fn vector_header(&mut self, count: u32) -> usize {
+        self.vector_header_at(count, 0)
+    }
+
+    /// A vector's frame already saying where its values will be, for the
+    /// driver to rewrite as it copies them.
+    fn vector_header_at(&mut self, count: u32, buffer: u64) -> usize {
         let mut frame = Vec::with_capacity(FRAME_BYTES);
-        frame.extend_from_slice(&at.to_le_bytes());
-        frame.extend_from_slice(&(count as u32).to_le_bytes());
+        frame.extend_from_slice(&buffer.to_le_bytes());
+        frame.extend_from_slice(&count.to_le_bytes());
         // Whoever reads the frame does not free what it points at.
         frame.extend_from_slice(&[0; 4]);
-        let frame_at = self.keep(frame);
-        let parent = self.address(frame_at, FRAME_BYTES, None);
-        self.address(at, length, Some(parent));
+        let at = self.keep(frame);
+        self.address(at, FRAME_BYTES, None)
+    }
+
+    /// Write `value` as an address of its own, inside the address `inside`
+    /// names at the offset given. Nothing written for nothing is how HIDL
+    /// lays out an empty vector.
+    pub fn buffer(&mut self, value: &[u8], inside: Option<(usize, usize)>) -> usize {
+        match value.is_empty() {
+            true => self.address(0, 0, inside),
+            false => {
+                let at = self.keep(value.to_vec());
+                self.address(at, value.len(), inside)
+            }
+        }
     }
 
     /// Write an address among the values and say where it sits, which is
     /// how the driver finds it. The answer is which address this is, for
     /// the one pointing inside it to name.
-    fn address(&mut self, at: u64, length: usize, inside: Option<usize>) -> usize {
+    fn address(&mut self, at: u64, length: usize, inside: Option<(usize, usize)>) -> usize {
+        // An address of nothing is written where it falls but is not one the
+        // driver has to carry, as libbinder leaves a null buffer out of its
+        // list too.
         let which = self.addresses.len();
-        self.addresses.push(self.data.len() as u64);
+        if at != 0 {
+            self.addresses.push(self.data.len() as u64);
+        }
         self.data.extend_from_slice(&ADDRESS.to_le_bytes());
         self.data.extend_from_slice(&inside.map_or(0, |_| INSIDE_ANOTHER).to_le_bytes());
         self.data.extend_from_slice(&at.to_le_bytes());
         self.data.extend_from_slice(&(length as u64).to_le_bytes());
-        self.data.extend_from_slice(&(inside.unwrap_or(0) as u64).to_le_bytes());
-        // The address inside the frame is the frame's first field.
-        self.data.extend_from_slice(&0u64.to_le_bytes());
+        self.data.extend_from_slice(&(inside.map_or(0, |(parent, _)| parent) as u64).to_le_bytes());
+        self.data.extend_from_slice(&(inside.map_or(0, |(_, offset)| offset) as u64).to_le_bytes());
         self.pointed += (length as u64).next_multiple_of(WORD);
         which
     }
@@ -161,6 +194,14 @@ impl<'a> Answer<'a> {
         Ok(i32::from_le_bytes(self.take(4)?.try_into().expect("four bytes")))
     }
 
+    pub fn u32(&mut self) -> Result<u32> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("four bytes")))
+    }
+
+    pub fn u64(&mut self) -> Result<u64> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
+    }
+
     /// A truth value: a byte, padded to four as everything is.
     pub fn bool(&mut self) -> Result<bool> {
         Ok(self.take(4)?[0] != 0)
@@ -168,7 +209,8 @@ impl<'a> Answer<'a> {
 
     /// The bytes an address in the reply points at. The driver has already
     /// moved them into this program's own room and rewritten the address,
-    /// so they are read where they lie.
+    /// so they are read where they lie. An address of nothing is how HIDL
+    /// writes an empty vector, and points at no bytes at all.
     pub fn pointed(&mut self) -> Result<&'a [u8]> {
         let raw = self.take(ADDRESS_BYTES)?;
         let kind = u32::from_le_bytes(raw[0..4].try_into().expect("four bytes"));
@@ -178,9 +220,27 @@ impl<'a> Answer<'a> {
         let at = u64::from_le_bytes(raw[8..16].try_into().expect("eight bytes"));
         let length = u64::from_le_bytes(raw[16..24].try_into().expect("eight bytes"));
         if at == 0 {
-            bail!("the service left out something the call asked for");
+            if length == 0 {
+                return Ok(&[]);
+            }
+            bail!("the service points at nothing for {length} bytes the call asked for");
         }
         Ok(unsafe { std::slice::from_raw_parts(at as *const u8, length as usize) })
+    }
+
+    /// A string as HIDL writes one: a frame saying how long it is, then its
+    /// bytes and a terminator the count leaves out.
+    pub fn hidl_string(&mut self) -> Result<String> {
+        let frame = self.pointed().context("read a string's frame")?;
+        if frame.len() < FRAME_BYTES {
+            bail!("a string's frame is {} bytes", frame.len());
+        }
+        let size = u32::from_le_bytes(frame[8..12].try_into().expect("four bytes")) as usize;
+        let raw = self.pointed().context("read a string")?;
+        if raw.len() < size {
+            bail!("a string of {size} bytes came with {}", raw.len());
+        }
+        Ok(String::from_utf8_lossy(&raw[..size]).into_owned())
     }
 
     /// Text the far side wrote as its own value rather than as a frame.
@@ -264,7 +324,7 @@ mod tests {
 
     /// Reads the parts of a written call back out of its own memory, the
     /// way the driver does: the values, and each address among them.
-    fn written(m: &Message) -> Vec<(u32, u64, Vec<u8>)> {
+    fn written(m: &Message) -> Vec<(u32, u64, u64, Vec<u8>)> {
         m.addresses
             .iter()
             .map(|at| {
@@ -273,10 +333,10 @@ mod tests {
                 let points = u64::from_le_bytes(raw[8..16].try_into().unwrap());
                 let length = u64::from_le_bytes(raw[16..24].try_into().unwrap()) as usize;
                 let inside = u64::from_le_bytes(raw[24..32].try_into().unwrap());
+                let offset = u64::from_le_bytes(raw[32..40].try_into().unwrap());
                 let bytes = unsafe { std::slice::from_raw_parts(points as *const u8, length) }.to_vec();
                 assert_eq!(u32::from_le_bytes(raw[0..4].try_into().unwrap()), ADDRESS);
-                assert_eq!(u64::from_le_bytes(raw[32..40].try_into().unwrap()), 0);
-                (flags, inside, bytes)
+                (flags, inside, offset, bytes)
             })
             .collect()
     }
@@ -307,12 +367,49 @@ mod tests {
         let parts = written(&m);
         assert_eq!(parts.len(), 2, "the frame, then the bytes");
         assert_eq!(parts[0].0, 0, "the frame points inside nothing");
-        assert_eq!(parts[0].2.len(), FRAME_BYTES);
-        assert_eq!(u32::from_le_bytes(parts[0].2[8..12].try_into().unwrap()), 3, "how many bytes there are");
+        assert_eq!(parts[0].3.len(), FRAME_BYTES);
+        assert_eq!(u32::from_le_bytes(parts[0].3[8..12].try_into().unwrap()), 3, "how many bytes there are");
         assert_eq!(parts[1].0, INSIDE_ANOTHER, "the bytes sit inside the frame");
         assert_eq!(parts[1].1, 0, "inside the first address of the call");
-        assert_eq!(parts[1].2, vec![1, 2, 3]);
+        assert_eq!(parts[1].2, 0, "at the start of the frame");
+        assert_eq!(parts[1].3, vec![1, 2, 3]);
         assert_eq!(m.pointed, FRAME_BYTES as u64 + WORD, "both rounded up to a word");
+    }
+
+    #[test]
+    fn an_empty_run_of_bytes_is_written_as_a_frame_pointing_at_nothing() {
+        let mut m = Message::call("a.b@1.0::IC");
+        m.bytes(&[]);
+        let parts = written(&m);
+        assert_eq!(parts.len(), 1, "only the frame has bytes to carry");
+        assert_eq!(u32::from_le_bytes(parts[0].3[8..12].try_into().unwrap()), 0, "no bytes");
+        assert_eq!(m.pointed, FRAME_BYTES as u64, "nothing to point at");
+    }
+
+    #[test]
+    fn an_address_can_sit_inside_another_at_a_given_offset() {
+        let mut m = Message::call("a.b@1.0::IC");
+        // A frame whose 16 bytes stand in for a structure, then a value
+        // inside it at offset 8, as a vector field of a structure is.
+        let parent = m.vector_header(0);
+        m.buffer(&[7, 8, 9], Some((parent, 8)));
+        let parts = written(&m);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].0, 0);
+        assert_eq!(parts[1].0, INSIDE_ANOTHER);
+        assert_eq!(parts[1].1, 0, "inside the frame");
+        assert_eq!(parts[1].2, 8, "eight bytes into it");
+        assert_eq!(parts[1].3, vec![7, 8, 9]);
+    }
+
+    #[test]
+    fn nothing_written_for_an_empty_value_is_not_an_address_the_driver_carries() {
+        let mut m = Message::call("a.b@1.0::IC");
+        let parent = m.vector_header(2);
+        assert_eq!(m.buffer(&[], Some((parent, 0))), 1, "the next address's place");
+        assert_eq!(m.buffer(&[1], Some((parent, 1))), 1, "an address of nothing takes no place");
+        assert_eq!(m.addresses.len(), 2, "the frame and the byte");
+        assert_eq!(m.pointed, FRAME_BYTES as u64 + WORD);
     }
 
     #[test]
@@ -320,8 +417,8 @@ mod tests {
         let mut m = Message::call("a.b@1.0::IC");
         m.text("default");
         let parts = written(&m);
-        assert_eq!(u32::from_le_bytes(parts[0].2[8..12].try_into().unwrap()), 7, "the terminator is not counted");
-        assert_eq!(parts[1].2, b"default\0", "but it is carried");
+        assert_eq!(u32::from_le_bytes(parts[0].3[8..12].try_into().unwrap()), 7, "the terminator is not counted");
+        assert_eq!(parts[1].3, b"default\0", "but it is carried");
     }
 
     #[test]
@@ -329,7 +426,7 @@ mod tests {
         let mut m = Message::call("a.b@1.0::IC");
         m.bytes(&[9; 5]);
         let parts = written(&m);
-        let in_frame = u64::from_le_bytes(parts[0].2[0..8].try_into().unwrap());
+        let in_frame = u64::from_le_bytes(parts[0].3[0..8].try_into().unwrap());
         let raw = &m.data[m.addresses[1] as usize..];
         assert_eq!(in_frame, u64::from_le_bytes(raw[8..16].try_into().unwrap()));
     }

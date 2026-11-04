@@ -83,7 +83,8 @@ impl Drop for Decryptor {
 pub fn with_key_service<T>(work: impl FnOnce(&KeyMint) -> Result<T>) -> Result<T, String> {
     let done = (|| {
         let binder = Binder::open()?;
-        let service = KeyMint::open(&binder)?;
+        let hardware = Binder::hardware()?;
+        let service = KeyMint::open(&binder, &hardware)?;
         work(&service)
     })();
     done.map_err(|e| format!("{e:#}"))

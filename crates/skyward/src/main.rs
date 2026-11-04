@@ -313,7 +313,8 @@ fn main() -> Result<()> {
         #[cfg(target_os = "android")]
         Cmd::Keymint { key, alias } => {
             let binder = skyward_binder::driver::Binder::open()?;
-            let service = skyward_crypto::keymint::KeyMint::open(&binder)?;
+            let hardware = skyward_binder::driver::Binder::hardware()?;
+            let service = skyward_crypto::keymint::KeyMint::open(&binder, &hardware)?;
             let hw = service.hardware()?;
             println!("keymint {} version {} at security level {} by {}", hw.name, hw.version, hw.security_level, hw.author);
             if let Some(alias) = alias {
