@@ -367,11 +367,15 @@ pub mod kms {
                 }
             }
             let conn = panel.ok_or_else(|| anyhow!("no connected built-in panel"))?;
+            // The panel's own mode is flagged preferred; a display driver
+            // that flags none, as some MediaTek ones do, gives its modes in
+            // the panel's order, so the first is the one it came up in.
             let preferred = conn
                 .modes()
                 .iter()
                 .find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
-                .ok_or_else(|| anyhow!("the panel reports no preferred mode"))?;
+                .or_else(|| conn.modes().first())
+                .ok_or_else(|| anyhow!("the panel reports no mode"))?;
             // The fastest refresh at the preferred size, the first listed among
             // equals: Android scrolls at it, and the 13 Ultra's touch reports
             // come at the same 120 Hz.

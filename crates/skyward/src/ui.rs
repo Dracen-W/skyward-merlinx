@@ -68,7 +68,9 @@ const STORAGE_LOGS: &str = "Skyward/logs";
 const SCREENSHOTS: &str = "DCIM/Screenshots";
 const HELD_SCREENSHOTS: &str = "/tmp/screenshots";
 
-/// The panel backlight under /sys/class/backlight.
+/// The panel backlight, under /sys/class/backlight where the panel's own
+/// driver registers a device and under /sys/class/leds where MediaTek's
+/// display driver drives it as an LED.
 struct Backlight {
     path: PathBuf,
     /// The raw level at the top of the slider: the panel's normal maximum.
@@ -78,19 +80,10 @@ struct Backlight {
 }
 
 impl Backlight {
-    fn open() -> Result<Self> {
-        let mut dirs: Vec<PathBuf> = fs::read_dir("/sys/class/backlight")
-            .context("read /sys/class/backlight")?
-            .map(|e| e.map(|e| e.path()))
-            .collect::<std::io::Result<_>>()?;
-        dirs.sort();
-        // Qualcomm panels expose panel0-backlight; take it when present.
-        let dir = dirs
-            .iter()
-            .find(|d| d.file_name().is_some_and(|n| n == "panel0-backlight"))
-            .or(dirs.first())
-            .ok_or_else(|| anyhow!("no backlight device"))?
-            .clone();
+    /// The panel's backlight, or `None` on a phone that exposes none: the
+    /// pages still show with the light the bootloader left on.
+    fn open() -> Result<Option<Self>> {
+        let Some(dir) = backlight_dir()? else { return Ok(None) };
         let read = |name: &str| -> Result<u32> {
             fs::read_to_string(dir.join(name))
                 .with_context(|| format!("read {}/{name}", dir.display()))?
@@ -100,7 +93,7 @@ impl Backlight {
         };
         let top = normal_max(read("max_brightness")?)?;
         let level = read("brightness")?;
-        Ok(Backlight { path: dir.join("brightness"), top, level })
+        Ok(Some(Backlight { path: dir.join("brightness"), top, level }))
     }
 
     /// Light the panel at `level` of its normal maximum, or turn it off
@@ -131,13 +124,38 @@ const NORMAL_MAX: [(&str, &str); 3] = [
     ("mi,mdss-dsi-fac-bl-max-level", "qcom,mdss-dsi-bl-max-level"),
 ];
 
+/// Where the phone exposes its panel's backlight: the backlight class where
+/// the panel's driver registers a device, and the LED class where MediaTek's
+/// display driver drives the panel through an LED. Qualcomm's panels name
+/// theirs `panel0-backlight`, and MediaTek's LED is `lcd-backlight`.
+fn backlight_dir() -> Result<Option<PathBuf>> {
+    let dirs = |class: &str| -> Result<Vec<PathBuf>> {
+        let Ok(entries) = fs::read_dir(class) else { return Ok(Vec::new()) };
+        let mut dirs: Vec<PathBuf> = entries.map(|e| e.map(|e| e.path())).collect::<std::io::Result<_>>()?;
+        dirs.sort();
+        Ok(dirs)
+    };
+    let backlight = dirs("/sys/class/backlight")?;
+    if let Some(dir) = backlight.iter().find(|d| d.file_name().is_some_and(|n| n == "panel0-backlight")).or(backlight.first()) {
+        return Ok(Some(dir.clone()));
+    }
+    let leds = dirs("/sys/class/leds")?;
+    Ok(leds.into_iter().find(|d| d.file_name().is_some_and(|n| n == "lcd-backlight")))
+}
+
 /// The raw backlight level, out of `max`, at the panel's normal maximum.
 /// Above it the panel runs in high brightness mode, which the stock system
 /// keeps for strong sunlight and its slider does not reach. The panel the
-/// display driver booted with gives that maximum in the device tree.
+/// display driver booted with gives that maximum in the device tree; a
+/// display driver of another maker, as MediaTek's, gives no such split and
+/// the whole range is the slider's.
 fn normal_max(max: u32) -> Result<u32> {
     let param = "/sys/module/msm_drm/parameters/dsi_display0";
-    let boot = fs::read_to_string(param).with_context(|| format!("read {param}"))?;
+    let boot = match fs::read_to_string(param) {
+        Ok(boot) => boot,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(max),
+        Err(e) => return Err(e).with_context(|| format!("read {param}")),
+    };
     // The panel's node, then its configuration after a colon, as in
     // "qcom,mdss_dsi_m1_42_02_0a_dsc_cmd:"; the driver takes no name
     // without the colon either.
@@ -1030,6 +1048,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
     let control = Control::open()?;
     let mut haptics = cfg.haptics.as_ref().map(Haptics::open).transpose()?;
     let mut backlight = Backlight::open()?;
+    skyward_sys::kmsg(&format!("the backlight is {}", if backlight.is_some() { "under control" } else { "the bootloader's" }))?;
     let first = match &request.work {
         Work::Fastboot => Screen::Fastboot,
         Work::PromptWipeData => Screen::CantStart,
@@ -1334,10 +1353,12 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
         // After the frame is on the panel, so a panel coming back on lights
         // with what it should show now, never with what it showed when it
         // went off.
-        if backlight.level == 0 && panel.is_some() {
+        if backlight.as_ref().is_some_and(|b| b.level == 0) && panel.is_some() {
             surface.settle()?;
         }
-        backlight.show(panel)?;
+        if let Some(backlight) = &mut backlight {
+            backlight.show(panel)?;
+        }
         // A page at rest draws the rows it has yet to while nothing else
         // is to be done, a band at a time, looking for input between bands.
         let ahead = panel.is_some() && !shown && app.draw_ahead(&fonts, &info);
