@@ -100,7 +100,7 @@ fn slot_partitions(md: &Metadata, slot: Slot) -> Vec<&Partition> {
         .collect()
 }
 
-fn base<'a>(p: &'a Partition, slot: Slot) -> &'a str {
+fn base(p: &Partition, slot: Slot) -> &str {
     &p.name[..p.name.len() - slot.suffix().len()]
 }
 
