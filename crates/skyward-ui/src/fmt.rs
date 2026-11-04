@@ -985,6 +985,13 @@ pub fn refusal(l: Lang, r: &Refusal, codename: &str, source: Source, zone: usize
             "這個更新檔的類型為 {kind}，請{give} A/B 完整更新檔。",
             "This package's type is {kind}. {give} an A/B full OTA package."
         ),
+        Refusal::AbOnly => l
+            .pick([
+                "本机没有 A/B 槽位，无法安装 A/B 更新包。",
+                "本機沒有 A/B 槽位，無法安裝 A/B 更新檔。",
+                "This phone has no A/B slots, so an A/B update can't be installed.",
+            ])
+            .into(),
         Refusal::OtherDevice(devices) => tr!(
             l,
             "该更新包适用于 {devices}，本机为 {codename}。",

@@ -156,7 +156,8 @@ pub fn collect(cfg: &DeviceConfig) -> Result<DeviceInfo> {
         kernel: kernel_release()?,
         storage: storage()?,
         battery: battery(Path::new(POWER_SUPPLY))?,
-        slot: skyward_vab::current_slot()?,
+        // A phone without slots has none to show, and none to pick.
+        slot: skyward_vab::current_slot()?.filter(|s| s.is_ab()),
         snapshot: skyward_vab::snapshot_state()?,
         boot: Boot { unlocked, verified: skyward_block::boot_param("androidboot.verifiedbootstate")? },
     })

@@ -20,6 +20,9 @@ pub use snapshots::Merge;
 pub enum Slot {
     A,
     B,
+    /// A phone that has no slots: its partitions carry no suffix, and there
+    /// is only the one set of them.
+    Only,
 }
 
 impl Slot {
@@ -27,6 +30,7 @@ impl Slot {
         match self {
             Slot::A => "_a",
             Slot::B => "_b",
+            Slot::Only => "",
         }
     }
 
@@ -34,13 +38,15 @@ impl Slot {
         match self {
             Slot::A => "A",
             Slot::B => "B",
+            Slot::Only => "",
         }
     }
 
-    /// The slot's metadata copy in super.
+    /// The slot's metadata copy in super. A phone without slots keeps the
+    /// one copy the phone's own tools write at zero.
     pub fn number(self) -> u32 {
         match self {
-            Slot::A => 0,
+            Slot::A | Slot::Only => 0,
             Slot::B => 1,
         }
     }
@@ -49,13 +55,21 @@ impl Slot {
         match self {
             Slot::A => Slot::B,
             Slot::B => Slot::A,
+            Slot::Only => Slot::Only,
         }
+    }
+
+    /// Whether this is one of two slots, as opposed to the single set of
+    /// partitions a phone without slots has.
+    pub fn is_ab(self) -> bool {
+        matches!(self, Slot::A | Slot::B)
     }
 
     pub fn from_suffix(s: &str) -> Option<Slot> {
         match s {
             "_a" => Some(Slot::A),
             "_b" => Some(Slot::B),
+            "" => Some(Slot::Only),
             _ => None,
         }
     }
@@ -72,10 +86,11 @@ pub struct BootSlots {
     pub successful: [bool; 2],
 }
 
-/// The booted slot, or `None` on devices that are not A/B.
+/// The booted slot. A phone without slots names none, and is given the one
+/// set of partitions it has.
 pub fn current_slot() -> Result<Option<Slot>> {
     match skyward_block::slot_suffix()? {
-        None => Ok(None),
+        None => Ok(Some(Slot::Only)),
         Some(s) => Slot::from_suffix(&s).map(Some).ok_or_else(|| anyhow!("slot suffix {s:?}")),
     }
 }
@@ -405,6 +420,17 @@ mod tests {
         assert_eq!(Slot::B.letter(), "B");
         assert_eq!((Slot::A.number(), Slot::B.number()), (0, 1));
         assert_eq!(Slot::from_suffix("_c"), None);
+    }
+
+    #[test]
+    fn a_phone_without_slots_has_the_one_set_of_partitions() {
+        assert_eq!(Slot::from_suffix(""), Some(Slot::Only));
+        assert_eq!(Slot::Only.suffix(), "");
+        assert_eq!(Slot::Only.letter(), "");
+        assert_eq!(Slot::Only.number(), 0);
+        assert_eq!(Slot::Only.other(), Slot::Only);
+        assert!(!Slot::Only.is_ab());
+        assert!(Slot::A.is_ab() && Slot::B.is_ab());
     }
 
     fn encoded(state: UpdateState) -> Vec<u8> {

@@ -498,7 +498,10 @@ fn describe(package: &Package) -> String {
 }
 
 fn update_system<S>(ctx: &mut Context, mount: &Mount<S>, update: &Update) -> Result<Done> {
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
+    if !slot.is_ab() {
+        return Ok(Done::Decided(Outcome::Refused(Refusal::AbOnly)));
+    }
     if let Err(refusal) = package::check(update, &phone(slot)?) {
         return Ok(Done::Decided(Outcome::Refused(refusal)));
     }
@@ -777,7 +780,7 @@ fn run_script(ctx: &mut Context, size: u64) -> Result<Done> {
             Ok(other) => bail!("a script waiting to be agreed to was told {other:?}"),
         }
     }
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
     extract_script()?;
     shell_at_sbin()?;
     let kept = hold(ctx, slot)?;
@@ -800,7 +803,14 @@ fn run_script(ctx: &mut Context, size: u64) -> Result<Done> {
     // the recovery of the slot that starts next, which a package that
     // installs to the other slot switches to.
     if let Some(kept) = &kept {
-        reflash(ctx, kept, skyward_vab::boot::next_slot().context("ask which slot starts next"));
+        // A phone without slots has the one recovery partition, which the
+        // script either wrote over or did not; there is no other slot to
+        // ask the boot control about.
+        let next = match slot.is_ab() {
+            true => skyward_vab::boot::next_slot().context("ask which slot starts next"),
+            false => Ok(slot),
+        };
+        reflash(ctx, kept, next);
     }
     let (code, wipe_cache) = ran?;
     Ok(Done::Script { code, wipe_cache })

@@ -411,7 +411,7 @@ fn main() -> Result<()> {
 }
 
 fn booted_slot() -> Result<skyward_vab::Slot> {
-    skyward_vab::current_slot()?.context("not an A/B device")
+    skyward_vab::current_slot()?.context("the device names no slot")
 }
 
 fn lp(super_dev: &Path, slot: Option<u32>) -> Result<()> {
@@ -814,12 +814,13 @@ fn identify(path: &Path) -> Result<()> {
 }
 
 fn slot() -> Result<()> {
-    match skyward_vab::current_slot()? {
-        Some(s) => println!("{}", s.suffix()),
-        None => println!("(not A/B)"),
+    let current = skyward_vab::current_slot()?;
+    match current {
+        Some(s) if s.is_ab() => println!("{}", s.suffix()),
+        _ => println!("(not A/B)"),
     }
     #[cfg(target_os = "android")]
-    {
+    if current.is_some_and(skyward_vab::Slot::is_ab) {
         use skyward_vab::boot::BootControl;
         let (binder, hardware) = (skyward_binder::driver::Binder::open()?, skyward_binder::driver::Binder::hardware()?);
         let opened = BootControl::open(&binder, &hardware);

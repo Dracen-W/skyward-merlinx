@@ -175,6 +175,8 @@ pub enum Refusal {
     Image,
     /// An update package that is not for A/B phones; the type it names.
     NotAb(String),
+    /// An A/B update package, on a phone that has no slots to install it to.
+    AbOnly,
     /// A package in misc that does not say it erases the phone for good;
     /// the type it names.
     NotBrick(String),

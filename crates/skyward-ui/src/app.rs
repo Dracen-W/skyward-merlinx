@@ -920,12 +920,16 @@ pub enum Pick {
 impl Pick {
     pub const ALL: [Pick; 3] = [Pick::Current, Pick::Other, Pick::Both];
 
-    /// The slots this means on a phone running from `current`.
+    /// The slots this means on a phone running from `current`. A phone
+    /// without slots has the one set of partitions, which both `Current`
+    /// and `Both` name; there is no other.
     pub fn slots(self, current: Slot) -> Vec<Slot> {
-        match self {
-            Pick::Current => vec![current],
-            Pick::Other => vec![current.other()],
-            Pick::Both => vec![Slot::A, Slot::B],
+        match (self, current.is_ab()) {
+            (Pick::Current | Pick::Both, false) => vec![Slot::Only],
+            (Pick::Other, false) => Vec::new(),
+            (Pick::Current, true) => vec![current],
+            (Pick::Other, true) => vec![current.other()],
+            (Pick::Both, true) => vec![Slot::A, Slot::B],
         }
     }
 }
@@ -7932,8 +7936,18 @@ mod tests {
     }
 
     #[test]
+    fn a_phone_without_slots_sends_an_image_to_its_one_set_of_partitions() {
+        assert_eq!(Pick::Current.slots(Slot::Only), [Slot::Only]);
+        assert_eq!(Pick::Both.slots(Slot::Only), [Slot::Only]);
+        assert!(Pick::Other.slots(Slot::Only).is_empty());
+        assert_eq!(Pick::Current.slots(Slot::B), [Slot::B]);
+        assert_eq!(Pick::Other.slots(Slot::B), [Slot::A]);
+        assert_eq!(Pick::Both.slots(Slot::B), [Slot::A, Slot::B]);
+    }
+
+    #[test]
     fn an_image_goes_where_it_is_sent_once_swiped() {
-        let (f, i) = (fonts(), info());
+        let (f, i) = (fonts(), DeviceInfo { slot: Some(Slot::B), ..info() });
         let mut app = sideloading(&f, &i);
         app.install(Event::Checking { size: 201_326_592 }, 0);
         let kind = ImageKind::Boot { kernel: true, ramdisk: skyward_install::Ramdisk::Recovery };

@@ -85,15 +85,22 @@ fn map_and_mount(p: &Partition, devices: &[(u32, u32)], slot: Slot) -> Result<Mo
 }
 
 /// The slot's partitions that hold data. Copy-on-write partitions such as
-/// odm_b-cow end in -cow and stay out.
+/// odm_b-cow end in -cow and stay out. A phone without slots names its
+/// partitions plainly, with no suffix at all.
 fn slot_partitions(md: &Metadata, slot: Slot) -> Vec<&Partition> {
     md.partitions
         .iter()
-        .filter(|p| p.name.ends_with(slot.suffix()) && !p.extents.is_empty() && p.attributes & ATTR_DISABLED == 0)
+        .filter(|p| {
+            let named = match slot {
+                Slot::Only => !p.name.ends_with("-cow"),
+                _ => p.name.ends_with(slot.suffix()),
+            };
+            named && !p.extents.is_empty() && p.attributes & ATTR_DISABLED == 0
+        })
         .collect()
 }
 
-fn base(p: &Partition, slot: Slot) -> &str {
+fn base<'a>(p: &'a Partition, slot: Slot) -> &'a str {
     &p.name[..p.name.len() - slot.suffix().len()]
 }
 
@@ -367,6 +374,13 @@ pub fn unmount_one(slot: Slot, base_name: &str) -> Result<()> {
 /// The slot's partitions that are mapped and show on their mount points, in
 /// the order they were mapped.
 pub fn mounted_partitions(slot: Slot) -> Result<Vec<Mounted>> {
+    // A phone without slots names its partitions plainly, so a name ending
+    // in nothing matches every device-mapper device. Keep those super
+    // lists, and fall back to the mount points where super cannot be read.
+    let known = match slot {
+        Slot::Only => slot_bases(slot).ok(),
+        _ => None,
+    };
     let mut found = Vec::new();
     for entry in fs::read_dir("/sys/block").context("read /sys/block")? {
         let entry = entry?;
@@ -376,6 +390,11 @@ pub fn mounted_partitions(slot: Slot) -> Result<Vec<Mounted>> {
         let name = fs::read_to_string(&name_file).with_context(|| format!("read {}", name_file.display()))?;
         let name = name.trim();
         let Some(base) = name.strip_suffix(slot.suffix()) else { continue };
+        if let Some(known) = &known {
+            if !known.iter().any(|b| b == base) {
+                continue;
+            }
+        }
         let device = Path::new("/dev/block").join(&node);
         let mount_point = mount_point(base);
         let Some(shown) = mount::visible(&mount_point)? else { continue };

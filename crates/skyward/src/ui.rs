@@ -876,7 +876,7 @@ fn read_folder(path: &Path) -> Result<Vec<FileRow>> {
 /// are started again from there whenever they end.
 fn read_mounts(services: &[Service]) -> Result<Vec<skyward_ui::app::MountRow>> {
     use skyward_ui::app::MountRow;
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
     let shown = skyward_vab::mounted_partitions(slot)?;
     let holders = skyward_block::mount::holders()?;
     let props = skyward_info::installed_props(slot)?;
@@ -936,7 +936,7 @@ fn set_slot(slot: skyward_vab::Slot) -> Result<skyward_vab::BootSlots, String> {
 /// and the booted slot's partitions come off.
 fn detach(services: Vec<Service>) -> Detach {
     Box::new(move || {
-        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+        let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
         let mounted = skyward_vab::mounted_partitions(slot)?;
         let busy = services::pin(&services, &mounted)?;
         skyward_vab::release_partitions(slot, &busy)
@@ -1191,7 +1191,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
             part_worker = Some(partwork::Worker::start(partwork::Task::Disable { package_size: *package_size })?);
         }
         Work::UnshareBlocks => {
-            let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+            let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
             app.part_work_started(PartKind::Unshare, true);
             part_worker = Some(partwork::Worker::start(partwork::Task::Unshare { slot })?);
         }
@@ -1922,7 +1922,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                         installer = Some(Installer::open(PathBuf::from(path), detach(cfg.services.clone()), install_options(&app))?);
                     }
                     Effect::Flash { partition, pick } => {
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
                         installer.as_ref().context("no installer holds an image")?.flash(partition, pick.slots(slot));
                     }
                     Effect::Cancel => match &installer {
@@ -2001,7 +2001,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     // page's to report, with what to do first.
                     Effect::Relabel => {
                         ensure!(relabeler.is_none(), "relabeling is under way already");
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
                         match relabel::rule_files(slot) {
                             Ok(rules) => {
                                 relabeler = Some(filework::Worker::start(filework::Task::Relabel { rules })?);
@@ -2194,14 +2194,14 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     // A partition that will not mount, or is in use, is the
                     // page's to report; the recovery carries on.
                     Effect::Mount(base) => {
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
                         if let Err(e) = skyward_vab::mount_one(slot, &base) {
                             app.mount_failed(MountFailure { mounting: true, base, detail: format!("{e:#}") });
                         }
                         app.set_mounts(mounts());
                     }
                     Effect::Unmount(base) => {
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
                         if let Err(e) = skyward_vab::unmount_one(slot, &base) {
                             app.mount_failed(MountFailure { mounting: false, base, detail: format!("{e:#}") });
                         }
@@ -2211,7 +2211,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     // then the slot's partitions come up as at boot.
                     Effect::EnterRecovery => {
                         skyward_sys::usb::switch(skyward_sys::usb::resting(), USB_TIMEOUT)?;
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = skyward_vab::current_slot()?.context("the phone names no slot")?;
                         crate::prepare(cfg, slot)?;
                         read_at = Instant::now();
                         info = skyward_info::collect(cfg)?;
