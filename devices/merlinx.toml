@@ -2,7 +2,7 @@
 codename = "merlinx"
 brand = "Redmi"
 model = "Redmi Note 9 (Global)"
-ab = true
+ab = false
 soc = { hans = "Helio G85 (MT6768/6769Z)", hant = "Helio G85 (MT6768/6769Z)", en = "Helio G85 (MT6768/6769Z)" }
 os_version_prop = "ro.build.version.release"
 # ro.build.version.release replace the MIOS version.
@@ -10,35 +10,74 @@ os_version_prop = "ro.build.version.release"
 [display]
 width = 1080
 height = 2340
-density = 430
+density = 440
 diagonal = 6.53
 corner_radius = 120
 
 [modules]
 sources = ["vendor"]
-# Merlinx uses panel FT8197 from FocalTech.
-# 1 modules under /vendor/firmware/.
-# Novatek may also be one of the panel supplier of merlinx, if problem exist on panel, may consider to add novatek into load.
-# Novatek load list, "novatek_ts_72d_fw", "novatek_ts_72d_mp", "novatek_ts_fw", "novatek_ts_g6_fw", "novatek_ts_g6_mp", "novatek_ts_mp".
-load = ["focaltech_ts_fw_xinli"]
+# The touchscreen drivers are built into the phone's kernel: the FocalTech
+# FT8719 of the Xinli panel, which reads /vendor/firmware/focaltech_ts_fw_xinli.bin,
+# and the Novatek NT36672A/D. The vendor partition holds no modules to load.
+load = []
 
-# The secure world reaches back into Android through the listeners this
-# daemon registers; without them the key service cannot use any key.
+# Each of the phone's own programs below runs as the user, in the groups
+# and with the capabilities its init script on the phone gives it, so that
+# what it makes in the data partition is whose it is when the phone runs
+# it, and the phone's own copy of it can still read and remove it.
+
+# The directory the phone's hardware services of the older kind register
+# with. A recovery carries none of it, so it is the installed system's own
+# program, running against the installed system's own libraries. It says it
+# is up by the property the services themselves wait on.
+[[service]]
+path = "/mnt/system_ext/bin/hwservicemanager"
+libraries = ["/mnt/system/system/lib64/bootstrap", "/mnt/system/system/lib64", "/mnt/system_ext/lib64"]
+ready_property = "hwservicemanager.ready"
+user = "system"
+groups = ["system", "readproc"]
+
+# The secure world, which the phone's own init starts on fs with the list of
+# trusted apps it serves. It reaches back into Android through the nodes the
+# owners below hand over, and says it has finished starting through the
+# property the key service waits on. Both the key service and the credential
+# service reach the secure world through it.
 [[service]]
 path = "/vendor/bin/teei_daemon"
+args = [
+    "-r", "020b0000000000000000000000000000",
+    "-r", "020f0000000000000000000000000000",
+    "-r", "06090000000000000000000000000000",
+    "-r", "05120000000000000000000000000000",
+    "-r", "40188311faf343488db888ad39496f9a",
+    "-r", "07060000000000000000000000007169",
+    "-r", "4be4f7dc1f2c11e5b5f7727283247c7f",
+    "-r", "9073f03a9618383bb1856eb3f990babd",
+    "-r", "08050000000000000000000000003419",
+    "-r", "5020170115e016302017012521300000",
+    "-r", "0f5eed3c3b5a47afacca69a84bf0efad",
+    "-r", "07407000000000000000000000000000",
+    "-r", "05160000000000000000000000000000",
+    "-r", "91dba524a6e24909acc48abd7163121a",
+    "-r", "08070000000000000000000000008270",
+    "-r", "09080000000000000000000000009381",
+    "-t", "08030000000000000000000000000000",
+    "-t", "85f630e0f0964c5fa2cc268ce04e3da3",
+    "-t", "98fb95bcb4bf42d26473eae48690d7ea",
+    "-t", "7b66512021214487ba710a51d7ea78fe",
+    "-t", "09010000000000000000000000000000",
+]
 libraries = ["/system/lib64", "/vendor/lib64"]
-ready_property = "vendor.sys.listeners.registered"
-user = "root"
-groups = ["root", "drmrpc"]
+ready_property = "vendor.soter.teei.init=INIT_OK"
+user = "system"
+groups = ["system"]
 
 # The key service, which is the only thing that can use the keys the phone
-# wrapped in hardware. The same program serves the secure clock and the
-# shared secret, which the phone describes apart from it.
-# Keymaster：Beanpod HIDL 4.1
+# wrapped in hardware. Keymaster 4.1, Beanpod over the TEEI secure world.
 [[service]]
 path = "/vendor/bin/hw/android.hardware.keymaster@4.1-service.beanpod"
 libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
-ready_service = "android.hardware.keymaster@4.1::IKeymasterDevice/default"
+ready_hardware_service = "android.hardware.keymaster@4.1::IKeymasterDevice/default"
 user = "system"
 groups = ["system", "drmrpc"]
 
@@ -48,6 +87,80 @@ groups = ["system", "drmrpc"]
 [[service]]
 path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service"
 libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
-ready_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
+ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
 user = "system"
 groups = ["system"]
+
+# WLAN: the MT6631, whose driver is built into the phone's kernel. MediaTek's
+# own loader hands the chip its firmware, and the assistant waits for the
+# driver's node and gives the chip its NVRAM, with the MAC address, from
+# nvdata. They run in the order the phone's own init starts them.
+[[service]]
+path = "/vendor/bin/wmt_loader"
+libraries = ["/system/lib64", "/vendor/lib64"]
+oneshot = true
+user = "system"
+groups = ["system"]
+
+[[service]]
+path = "/vendor/bin/wmt_launcher"
+args = ["-p", "/vendor/firmware/", "-o", "1"]
+libraries = ["/system/lib64", "/vendor/lib64"]
+user = "system"
+groups = ["system"]
+
+[[service]]
+path = "/vendor/bin/wlan_assistant"
+libraries = ["/system/lib64", "/vendor/lib64"]
+user = "wifi"
+groups = ["system", "gps", "inet"]
+
+# The secure world's own nodes, which the phone's init hands to the accounts
+# its services run as. A recovery's ueventd leaves them root's alone.
+[[owners]]
+user = "system"
+group = "drmrpc"
+mode = 0o666
+paths = ["/dev/isee_tee0"]
+
+[[owners]]
+user = "system"
+group = "system"
+mode = 0o660
+paths = ["/dev/teei_config", "/dev/tz_vfs"]
+
+# The partitions the phone mounts under /mnt/vendor and a recovery leaves
+# unmounted: the secure world keeps its RPMB state in persist, and the
+# WLAN's NVRAM, with the MAC address, is in nvdata.
+[partitions]
+mounted = ["nvdata", "persist"]
+
+# The WLAN driver is built into the kernel, so there are no modules to load.
+# The phone's own wpa_supplicant joins networks and registers with the
+# service directory; whether a network joined reaches the internet is asked
+# of the page the system asks.
+[wlan]
+modules = []
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+libraries = ["/system/lib64", "/vendor/lib64"]
+service = "android.hardware.wifi.supplicant.ISupplicant/default"
+probe = "http://connectivitycheck.gstatic.com/generate_204"
+
+# What of the data partition a backup leaves out because the secure world
+# keeps it in step with itself: the TEE's own storage and the keys its key
+# provisioning made.
+[backup]
+data_skipped = ["vendor/thh", "vendor/key_provisioning"]
+
+# Where the phone's own programs keep logs and dumps in the data partition:
+# the system's, the camera's, the charger's, the display's, and the video
+# codec's.
+[wipe]
+logs = [
+    "/data/vendor/log",
+    "/data/vendor/camera_dump",
+    "/data/vendor/charge_logger",
+    "/data/vendor/dipdebug",
+    "/data/vendor/vcodec/log",
+]

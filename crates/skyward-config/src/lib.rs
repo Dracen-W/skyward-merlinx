@@ -626,6 +626,24 @@ mod tests {
     }
 
     #[test]
+    fn merlinx_is_an_a_only_phone_with_its_own_secure_world_and_wlan() {
+        let cfg = DeviceConfig::parse(include_str!("../../../devices/merlinx.toml")).unwrap();
+        assert!(!cfg.device.ab, "the phone has no slots");
+        assert_eq!(cfg.display.density, 440);
+        assert!(cfg.modules.load.is_empty(), "its drivers are built into the kernel");
+        let teei = cfg.services.iter().find(|s| s.path.ends_with("teei_daemon")).expect("the secure world's daemon");
+        assert_eq!(teei.ready_property.as_deref(), Some("vendor.soter.teei.init=INIT_OK"));
+        assert_eq!(teei.args.len(), 42, "the trusted apps the phone's own init names");
+        let keymaster = cfg.services.iter().find(|s| s.path.contains("keymaster@4.1")).expect("the key service");
+        assert_eq!(keymaster.ready_hardware_service.as_deref(), Some("android.hardware.keymaster@4.1::IKeymasterDevice/default"));
+        let wlan = cfg.wlan.expect("the phone has WLAN");
+        assert!(wlan.modules.is_empty(), "its driver is built into the kernel");
+        assert_eq!(wlan.interface, "wlan0");
+        assert_eq!(wlan.probe, "http://connectivitycheck.gstatic.com/generate_204");
+        assert!(cfg.services.iter().any(|s| s.path.ends_with("wlan_assistant")), "the chip's NVRAM is read by the phone's own assistant");
+    }
+
+    #[test]
     fn ishtar_clicks_with_a_waveform_its_driver_keeps() {
         let cfg = DeviceConfig::parse(include_str!("../../../devices/ishtar.toml")).unwrap();
         let haptics = cfg.haptics.expect("the 13 Ultra has a motor");
