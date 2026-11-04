@@ -1,107 +1,78 @@
 ![Skyward Recovery](assets/hero.jpg)
 
-# Skyward
+# Skyward for merlinx
 
 [English](README.md) | 简体中文
 
-Skyward 是使用 Rust 编写的 recovery，从零开始编写。
+Skyward 是使用 Rust 从零编写的 recovery。本仓库是 [Skyward](https://github.com/kirklin/skyward)
+的分支，专注于 **Redmi Note 9（merlinx）**。
 
-<p align="center">
-  <img src="assets/home.png" width="30%" alt="首页">
-  <img src="assets/settings-dark.png" width="30%" alt="深色模式下的设置">
-  <img src="assets/time-zone.png" width="30%" alt="时区">
-</p>
+> [!IMPORTANT]
+> 本分支围绕 merlinx 的机型配置构建，面向 **vendor 分区为 vendor S（Android 12）**
+> 的机器，且**只在 Infinity X 4.0 / Android 17 上适用并测试过**。
+>
+> 目前**只有启动界面可用**：屏幕、触摸、背光和 recovery 自己的菜单能正常显示。
+> 其他功能——包括安装刷机包、WLAN、解密、振动和其余硬件——**尚未测试或尚未完成**。
+> 见 [TODO](TODO.zh-CN.md) 和 [疑难问题](docs/tricky-issues.zh-CN.md)。
 
-## 功能
+## 目前可用
 
-- 解密 data 分区
-- 安装刷机包、系统更新包和分区镜像，支持内部存储、U 盘和 adb sideload
-- 在线系统更新
-- 备份和恢复
-- 清除数据、恢复出厂设置
-- 挂载分区，修复和格式化文件系统
-- 文件管理和终端
-- 连接 WLAN
-- MTP 文件传输、adb 和 fastbootd
-- 重启到系统、recovery、fastboot、bootloader 和 EDL，切换启动槽位
-- 浅色和深色模式，简体中文、繁体中文和英文
+- 在 merlinx 上启动，并在 MediaTek framebuffer 上完整绘制 recovery 界面
+- 触摸输入、recovery 自己的菜单、主题和语言
+- 通过 LED class 设备控制背光
+- adb、`adb sideload`、fastbootd 和 MTP
+
+其余功能请一律视为实验性。尤其是，**不要依赖这个版本解密或保护你的数据**。
 
 ## 支持的机型
 
-| 机型 | 代号 | 测试的系统版本 |
-| --- | --- | --- |
-| 小米 17 Ultra | `nezha` | OS4.0.4.0.XPACNXM（Android 17） |
-| 小米 13 Ultra | `ishtar` | OS3.0.308.0.WMACNXM（Android 16） |
+| 机型 | 代号 | vendor | 测试的系统 |
+| --- | --- | --- | --- |
+| Redmi Note 9 (Global) | `merlinx` | vendor S（Android 12） | Infinity X 4.0（Android 17） |
 
-### 🚧 施工中
-
-这些机型的镜像按照各自的原厂固件构建，还没有在真机上试过。屏幕、触摸、WLAN 和振动已经配置好，不会解密 data 分区。
-
-| 机型 | 代号 | 构建所用的系统版本 |
-| --- | --- | --- |
-| 🚧 小米 13 | `fuxi` | OS3.0.309.0.WMCCNXM（Android 16） |
-| 🚧 小米 13 Pro | `nuwa` | OS3.0.312.0.WMBCNXM（Android 16） |
-| 🚧 小米 14 | `houji` | OS3.0.307.0.WNCCNXM（Android 16） |
-| 🚧 小米 14 Pro | `shennong` | OS3.0.309.0.WNBCNXM（Android 16） |
-| 🚧 小米 14 Ultra | `aurora` | OS3.0.308.0.WNACNXM（Android 16） |
-| 🚧 小米 15 | `dada` | OS3.0.307.0.WOCCNXM（Android 16） |
-| 🚧 小米 15 Pro | `haotian` | OS3.0.309.0.WOBCNXM（Android 16） |
-| 🚧 小米 15 Ultra | `xuanyuan` | OS3.0.314.0.WOACNXM（Android 16） |
-| 🚧 小米 17 | `pudding` | OS4.0.4.0.XPCCNXM（Android 17） |
-| 🚧 小米 17 Pro | `pandora` | OS4.0.4.0.XBLCNXM（Android 17） |
-| 🚧 小米 17 Pro Max | `popsicle` | OS4.0.4.0.XPBCNXM（Android 17） |
-| 🚧 小米 17 Max | `byron` | OS3.0.310.0.WAFCNXM（Android 16） |
-| 🚧 REDMI K80 | `zorn` | OS3.0.309.0.WOKCNXM（Android 16） |
-| 🚧 REDMI K80 Pro | `miro` | OS3.0.305.0.WOMCNXM（Android 16） |
-| 🚧 REDMI K90 | `annibale` | OS3.0.307.0.WPKCNXM（Android 16） |
-| 🚧 REDMI K90 Pro Max | `myron` | OS4.0.4.0.XPMCNXM（Android 17） |
-| 🚧 REDMI K90 Ultra | `warsaw` | OS3.0.309.0.WHPCNXM（Android 16） |
-| 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM（Android 17） |
-| 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM（Android 17） |
+上游的 `nezha` 和 `ishtar` 配置保留在 `devices/` 中，以便和上游保持接近，但本分支
+并不为它们构建或测试。
 
 ## 安装
 
-Skyward 需要已解锁的 bootloader。从 [Releases](https://github.com/kirklin/skyward/releases) 下载对应机型的 zip，每个文件都标有机型和代号，例如 Xiaomi 17 Ultra (nezha)。使用 `SHA256SUMS` 核对并解压之后，在手机处于 fastboot 模式的时候，把其中的镜像刷入当前运行槽位的 recovery 分区：
+Skyward 需要已解锁的 bootloader。构建镜像（见下文）后，在手机处于 fastboot 模式时
+把镜像刷入 recovery 分区：
 
 ```sh
-unzip skyward-v0.1.2-nezha-OS4.0.4.0.XPACNXM.zip
-fastboot flash recovery skyward-v0.1.2-nezha-OS4.0.4.0.XPACNXM.img
+fastboot flash recovery skyward-merlinx.img
 fastboot reboot recovery
 ```
 
-之后可以在 Skyward 自己的“安装”页面安装解压出来的新版镜像。打开 **自动重新刷入 Skyward** 之后，系统更新或者刷机包覆盖 recovery 分区的时候，Skyward 会重新刷回这些分区。
-
-super 中没有系统的时候，Skyward 仍然可以启动：屏幕和按键、adb、`adb sideload` 和 fastbootd 都能使用，足够装回一个系统。触摸、WLAN 和解密依赖已安装系统中的程序，系统装回之后随之恢复。
-
-Skyward 中的 adb 是 root shell，手机上无需授权：手机处于 recovery 的时候，任何人拿到手机和数据线都能访问其中的存储。
+镜像是在 merlinx 原厂 recovery 分区的基础上构建的。请保留一份原厂 `recovery.img`，
+以便随时恢复。
 
 ## 构建
 
-Skyward 使用 `rust-toolchain.toml` 指定的稳定版 Rust 和它的 `aarch64-linux-android` 目标、Android NDK r29 和 [cargo-ndk](https://github.com/bbqsrc/cargo-ndk) 构建。recovery 服务针对手机构建，打包工具针对电脑构建：
+Skyward 使用 `rust-toolchain.toml` 指定的稳定版 Rust 和它的 `aarch64-linux-android`
+目标、Android NDK r29 和 [cargo-ndk](https://github.com/bbqsrc/cargo-ndk) 构建。
+recovery 服务针对手机构建，打包工具针对电脑构建：
 
 ```sh
+export ANDROID_NDK_HOME=/path/to/android-ndk-r29
 cargo ndk -t arm64-v8a --platform 30 build --release -p skyward
 cargo build --release -p skyward-pack
 ```
 
-打包工具从小米服务器上这个版本的完整更新包中取出原厂 recovery 分区，只读取这个分区所在的部分，并且按照设备配置文件核对 SHA-256：
-
-```sh
-target/release/skyward-pack stock --config devices/nezha.toml --out target/stock/nezha/recovery.img
-```
-
-然后在它的基础上构建镜像：
+然后在 merlinx 原厂 recovery 镜像的基础上打包：
 
 ```sh
 target/release/skyward-pack recovery \
-  --stock target/stock/nezha/recovery.img \
+  --stock /path/to/stock/recovery.img \
   --binary target/aarch64-linux-android/release/skyward \
-  --config devices/nezha.toml \
+  --config devices/merlinx.toml \
   --font resources/fonts/MiSansVF.ttf \
   --mono resources/fonts/KirkMono-Regular.ttf \
   --mono-license resources/fonts/KirkMono-OFL.txt \
-  --out target/skyward-nezha.img
+  --out skyward-merlinx.img
 ```
+
+`devices/merlinx.toml` 中故意没有 `[stock]` 段：本分支使用你提供的 recovery 镜像
+打包，而不是自动下载原厂更新包。
 
 测试和代码检查在电脑上运行；只在手机上运行的代码按照手机目标检查：
 
@@ -111,11 +82,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo ndk -t arm64-v8a --platform 30 clippy -p skyward -p skyward-install -- -D warnings
 ```
 
-`skyward-preview` 无需手机，在电脑上把页面绘制成 PNG 文件：每个页面完整绘制成长截图的样子，覆盖它可能处于的各种状态，另外还有触摸和动画过程中某些时刻的屏幕。`--lang` 按照地区代码选择语言，例如 `en` 或者 `zh-TW`：
+## 文档
 
-```sh
-cargo run --release -p skyward-preview -- target/preview --lang en
-```
+- [疑难问题](docs/tricky-issues.zh-CN.md)：把本分支跑起来时遇到的问题，以及关于它们的结论
+- [TODO](TODO.zh-CN.md)：尚未完成的工作
 
 ## 许可证
 
