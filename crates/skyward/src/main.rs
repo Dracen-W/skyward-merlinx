@@ -254,6 +254,9 @@ fn main() -> Result<()> {
             for d in &mounts.damaged {
                 println!("damaged: {d}");
             }
+            if let Some(e) = &mounts.metadata {
+                println!("metadata: {e}");
+            }
             for m in &mounts.partitions {
                 println!("{:<14} {:<16} {:<18} {}", m.partition, m.device.display(), m.mount_point.display(), m.filesystem);
             }
@@ -744,6 +747,9 @@ fn prepare(cfg: &DeviceConfig, slot: skyward_vab::Slot) -> Result<()> {
         Ok(mounts) => {
             for d in &mounts.damaged {
                 skyward_sys::kmsg(&format!("super: {d}"))?;
+            }
+            if let Some(e) = &mounts.metadata {
+                skyward_sys::kmsg(&format!("/metadata not mounted: {e}"))?;
             }
             for m in &mounts.partitions {
                 skyward_sys::kmsg(&format!("mounted {} on {} ({})", m.partition, m.mount_point.display(), m.filesystem))?;

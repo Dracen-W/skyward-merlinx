@@ -21,6 +21,10 @@ pub struct Mounts {
     pub partitions: Vec<Mounted>,
     /// Damaged metadata copies in super that their backups stood in for.
     pub damaged: Vec<String>,
+    /// Why /metadata could not be mounted, where it could not. A phone just
+    /// flashed has none yet; its partitions still mount, and no update can
+    /// be pending without it.
+    pub metadata: Option<String>,
 }
 
 /// Where a logical partition goes in recovery. System goes to /mnt/system,
@@ -120,9 +124,17 @@ fn ensure_no_snapshot() -> Result<()> {
 /// mounted, and that still shows, is taken as it is.
 pub fn mount_partitions(slot: Slot) -> Result<Mounts> {
     let metadata = Path::new(METADATA);
-    if !mount::is_mount_point(metadata)? {
-        mount::mount_ro(&Path::new(BY_NAME).join("metadata"), metadata)?;
-    }
+    // A phone whose metadata has never been formatted, as one just flashed
+    // is, has none to read. Its partitions still mount; without metadata no
+    // update can be tracked, so none can be pending.
+    let metadata_error = if mount::is_mount_point(metadata)? {
+        None
+    } else {
+        match mount::mount_ro(&Path::new(BY_NAME).join("metadata"), metadata) {
+            Ok(_) => None,
+            Err(e) => Some(format!("{e:#}")),
+        }
+    };
     let super_dev = super_device();
     let md = skyward_lp::read(&super_dev, slot.number())?;
     let devices = block_devices(&md, &super_dev)?;
@@ -133,7 +145,7 @@ pub fn mount_partitions(slot: Slot) -> Result<Mounts> {
     };
 
     let shown = mounted_partitions(slot)?;
-    let mut mounts = Mounts { partitions: Vec::new(), damaged: md.damaged.clone() };
+    let mut mounts = Mounts { partitions: Vec::new(), damaged: md.damaged.clone(), metadata: metadata_error };
     for p in slot_partitions(&md, slot) {
         if let Some(m) = shown.iter().find(|m| m.partition == p.name) {
             mounts.partitions.push(m.clone());
