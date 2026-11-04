@@ -54,11 +54,19 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The loader a program built to run before anything is mounted asks for,
-/// and where the installed system keeps the one it was built for: in the
-/// bundle that carries the rest of its own runtime.
+/// and where the installed system keeps the one it was built for: beside
+/// its own system where it keeps one there, and otherwise in the bundle
+/// that carries the rest of its own runtime.
 const EARLY_LOADER: &str = "/system/bin/bootstrap/linker64";
 const RUNTIME_BUNDLE: &str = "com.android.runtime";
 const BUNDLE_LOADER: &str = "bin/linker64";
+
+/// Where the installed system describes the hardware it carries, and where
+/// the recovery puts a description of its own over it. The partition it
+/// lies on is read-only and has no room for another file, so the recovery
+/// stages its description on its own storage and mounts that over the file.
+const INSTALLED_MANIFEST: &str = "/vendor/etc/vintf/manifest.xml";
+const STAGED_MANIFEST: &str = "/skyward/vintf/manifest.xml";
 
 /// Which programs may register which hardware services, and where the
 /// directory for those services looks for that.
@@ -71,8 +79,11 @@ const HARDWARE_DRIVER: &str = "/dev/hwbinder";
 const HARDWARE_DRIVER_NODE: &str = "/dev/binderfs/hwbinder";
 
 /// The directory for those services is itself one of them, and it turns
-/// itself off when the running system does not describe it.
-const HARDWARE_DIRECTORY: &str = "android.hidl.manager@1.2::IServiceManager/default";
+/// itself off when the running system does not describe it. The installed
+/// system's directory asks for the first version of its description, and
+/// the newer reader reads the installed system's own description for that,
+/// not the one a recovery publishes for its framework.
+const HARDWARE_DIRECTORY: &str = "android.hidl.manager@1.0::IServiceManager/default";
 
 /// What says the directory is off. It is read by the services, and in a
 /// recovery there is nothing else to set it.
@@ -98,10 +109,17 @@ pub fn prepare_hardware_directory(wanted: &[String]) -> Result<()> {
     // installed system's programs are loaded by the installed system's
     // loader rather than by the older one a recovery carries.
     let loader = Path::new(EARLY_LOADER);
-    let from = bundle(RUNTIME_BUNDLE)?
-        .map(|at| at.join(BUNDLE_LOADER))
-        .filter(|p| p.is_file())
-        .with_context(|| format!("the installed system carries no {RUNTIME_BUNDLE}, which holds the loader its own programs ask for"))?;
+    // The installed system's own loader, where it keeps one beside its
+    // system. Only where it does not is the bundle of its runtime opened:
+    // the bundle is a filesystem in a file, and opening one takes a loop
+    // device, which a recovery's kernel does not always hand out.
+    let from = match crate::runtime::Runtime::installed() {
+        Some(runtime) => runtime.loader().to_path_buf(),
+        None => bundle(RUNTIME_BUNDLE)?
+            .map(|at| at.join(BUNDLE_LOADER))
+            .filter(|p| p.is_file())
+            .with_context(|| format!("the installed system carries no {RUNTIME_BUNDLE}, which holds the loader its own programs ask for"))?,
+    };
     let dir = loader.parent().expect("the loader is in a directory");
     fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
     // Made under the recovery's own umask the folder is root's alone, and
@@ -136,10 +154,48 @@ pub fn prepare_hardware_directory(wanted: &[String]) -> Result<()> {
     fs::write(RECOVERY_MANIFEST, describe_hardware(wanted)?).with_context(|| format!("write {RECOVERY_MANIFEST}"))?;
     fs::set_permissions(RECOVERY_MANIFEST, std::os::unix::fs::PermissionsExt::from_mode(0o644))
         .with_context(|| format!("let every user read {RECOVERY_MANIFEST}"))?;
+    // The newer directory reads the installed system's own description of
+    // the hardware it carries, not the framework's, to know whether the
+    // older kind of hardware service is one it should run at all.
+    publish_device_description()?;
     // The directory turns itself off when it cannot find its own
     // description, and a run of it before this was written may have left
     // that behind.
     skyward_sys::set_prop(DIRECTORY_OFF, "false")?;
+    Ok(())
+}
+
+/// Put a description of the directory over the installed system's own
+/// description of the hardware it carries, where that description names no
+/// directory. The installed system's partition is read-only and has no room
+/// for another file, so the description is staged on the recovery's own
+/// storage and mounted over the file. A description that already names the
+/// directory is left as it is, and a system that carries none is left alone:
+/// older directories read the framework's description instead.
+fn publish_device_description() -> Result<()> {
+    let from = Path::new(INSTALLED_MANIFEST);
+    let text = match fs::read_to_string(from) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("read {}", from.display())),
+    };
+    if text.contains("android.hidl.manager") {
+        return Ok(());
+    }
+    let at = text.rfind("</manifest>").with_context(|| format!("{} does not end as a manifest", from.display()))?;
+    let staged = Path::new(STAGED_MANIFEST);
+    let dir = staged.parent().expect("the staged manifest is in a directory");
+    fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
+    let mut out = String::with_capacity(text.len() + 256);
+    out.push_str(&text[..at]);
+    out.push_str(&describe_hardware_entries(&[])?);
+    out.push_str(&text[at..]);
+    fs::write(staged, out).with_context(|| format!("write {}", staged.display()))?;
+    fs::set_permissions(staged, std::os::unix::fs::PermissionsExt::from_mode(0o644))
+        .with_context(|| format!("let every user read {}", staged.display()))?;
+    if !skyward_block::mount::is_mount_point(from)? {
+        skyward_block::mount::bind(staged, from).with_context(|| format!("mount {} over {}", staged.display(), from.display()))?;
+    }
     Ok(())
 }
 
@@ -149,6 +205,14 @@ pub fn prepare_hardware_directory(wanted: &[String]) -> Result<()> {
 /// holds the two.
 fn describe_hardware(wanted: &[String]) -> Result<String> {
     let mut out = String::from("<manifest version=\"1.0\" type=\"framework\">\n");
+    out.push_str(&describe_hardware_entries(wanted)?);
+    out.push_str("</manifest>\n");
+    Ok(out)
+}
+
+/// The entries a description holds for the directory and for `wanted`.
+fn describe_hardware_entries(wanted: &[String]) -> Result<String> {
+    let mut out = String::new();
     for name in std::iter::once(HARDWARE_DIRECTORY).chain(wanted.iter().map(String::as_str)) {
         let (package, rest) = name
             .split_once('@')
@@ -159,7 +223,6 @@ fn describe_hardware(wanted: &[String]) -> Result<String> {
         out.push_str(&format!("        <fqname>@{rest}</fqname>\n"));
         out.push_str("    </hal>\n");
     }
-    out.push_str("</manifest>\n");
     Ok(out)
 }
 

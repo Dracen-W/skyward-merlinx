@@ -26,6 +26,8 @@ mod readings;
 #[cfg(target_os = "android")]
 mod relabel;
 #[cfg(target_os = "android")]
+mod runtime;
+#[cfg(target_os = "android")]
 mod secure;
 #[cfg(target_os = "android")]
 mod services;
@@ -268,7 +270,7 @@ fn main() -> Result<()> {
             let props = skyward_info::installed_props(booted_slot()?)?;
             let mut services = DeviceConfig::load(&config)?.services;
             services.retain(|s| s.runs_on(&props));
-            services::start(&services, secure::libraries()?.as_deref())?;
+            services::start(&services, secure::libraries()?.as_deref(), runtime::Runtime::installed().as_ref())?;
             loop {
                 std::thread::park();
             }
@@ -530,7 +532,11 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot) -> Result<()> {
     if let Some(dir) = &libraries {
         skyward_sys::kmsg(&format!("the phone's own libraries are at {}", dir.display()))?;
     }
-    services::start(&services, libraries.as_deref())?;
+    let runtime = runtime::Runtime::installed();
+    if let Some(runtime) = &runtime {
+        skyward_sys::kmsg(&format!("the installed system's own loader is at {}", runtime.loader().display()))?;
+    }
+    services::start(&services, libraries.as_deref(), runtime.as_ref())?;
     agree_on_the_notes_key(&registering)
 }
 

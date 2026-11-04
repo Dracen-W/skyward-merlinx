@@ -4,6 +4,7 @@
 //! stand each time that changes.
 
 use anyhow::{bail, ensure, Context, Result};
+use crate::runtime::Runtime;
 use skyward_config::{Firmware, Wlan as Config};
 use skyward_net::dhcp::{self, Kept, Lease};
 use skyward_net::http::Servers;
@@ -120,7 +121,7 @@ impl Worker {
     /// driver's modules are found in, `libraries` the bundle of the vendor
     /// interface's libraries, and `servers` where the DNS servers the
     /// network gives are kept for whoever looks names up.
-    pub fn start(cfg: Config, modules: Vec<PathBuf>, libraries: Option<PathBuf>, servers: Servers) -> Result<Worker> {
+    pub fn start(cfg: Config, modules: Vec<PathBuf>, libraries: Option<PathBuf>, runtime: Option<Runtime>, servers: Servers) -> Result<Worker> {
         let (inbox_tx, inbox) = mpsc::channel();
         let (poked, poke) = pipe()?;
         let (told_tx, told) = mpsc::channel();
@@ -136,7 +137,7 @@ impl Worker {
                     let _ = told_tx.send(r);
                     signal(&rung);
                 };
-                let mut s = Station { cfg, modules, libraries, servers, state: Wlan::default(), running: None, back, tell: Box::new(tell) };
+                let mut s = Station { cfg, modules, libraries, runtime, servers, state: Wlan::default(), running: None, back, tell: Box::new(tell) };
                 s.run(&inbox, &poked);
             })
             .context("start the WLAN thread")?;
@@ -240,6 +241,7 @@ struct Station {
     cfg: Config,
     modules: Vec<PathBuf>,
     libraries: Option<PathBuf>,
+    runtime: Option<Runtime>,
     servers: Servers,
     state: Wlan,
     running: Option<Running>,
@@ -341,7 +343,7 @@ impl Station {
 
     fn start(&self) -> Result<Running> {
         bring_up(&self.cfg, &self.modules)?;
-        let mut child = start_supplicant(&self.cfg, self.libraries.as_deref())?;
+        let mut child = start_supplicant(&self.cfg, self.libraries.as_deref(), self.runtime.as_ref())?;
         let socket = Path::new(HOME).join("sockets").join(&self.cfg.interface);
         let connected = (|| -> Result<(Control, Control)> {
             let control = Control::open(&socket)?;
@@ -707,7 +709,7 @@ fn place(file: &Firmware) -> Result<()> {
 }
 
 /// Start the supplicant on the interface, and wait for its control socket.
-fn start_supplicant(cfg: &Config, libraries: Option<&Path>) -> Result<Child> {
+fn start_supplicant(cfg: &Config, libraries: Option<&Path>, runtime: Option<&Runtime>) -> Result<Child> {
     let home = Path::new(HOME);
     let sockets = home.join("sockets");
     fs::create_dir_all(&sockets).with_context(|| format!("make {}", sockets.display()))?;
@@ -727,7 +729,14 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>) -> Result<Child> {
     if let Some(dir) = libraries {
         path.push(dir.to_string_lossy().into_owned());
     }
-    let mut child = Process::new(&cfg.supplicant)
+    let mut command = match runtime {
+        Some(runtime) => {
+            path = runtime.libraries_for(&path);
+            runtime.command(Path::new(&cfg.supplicant))
+        }
+        None => Process::new(&cfg.supplicant),
+    };
+    let mut child = command
         .args(["-i", &cfg.interface, "-D", "nl80211", "-c"])
         .arg(&settings)
         .env("LD_LIBRARY_PATH", path.join(":"))

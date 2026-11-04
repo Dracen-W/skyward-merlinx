@@ -1261,7 +1261,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                 let _ = skyward_sys::kmsg(&format!("the vendor interface's libraries are not open: {e:#}"));
                 None
             });
-            Some(wlan::Worker::start(w.clone(), modules, libraries, servers.clone())?)
+            Some(wlan::Worker::start(w.clone(), modules, libraries, crate::runtime::Runtime::installed(), servers.clone())?)
         }
         None => None,
     };

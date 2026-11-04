@@ -1,4 +1,5 @@
 use anyhow::{bail, ensure, Context, Result};
+use crate::runtime::Runtime;
 use procfs::process::{FDTarget, MMapPath, Process};
 use skyward_config::Service;
 use skyward_sys::ueventd;
@@ -44,7 +45,7 @@ const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 ///
 /// `libraries` is a directory of shared libraries every one of them may
 /// need, searched after whatever it names itself.
-pub fn start(services: &[Service], libraries: Option<&Path>) -> Result<()> {
+pub fn start(services: &[Service], libraries: Option<&Path>, runtime: Option<&Runtime>) -> Result<()> {
     let known = ueventd::accounts(&ueventd::PASSWD_FILES.iter().chain(&ueventd::GROUP_FILES).copied().collect::<Vec<_>>());
     for s in services {
         if !Path::new(&s.path).is_file() {
@@ -56,7 +57,7 @@ pub fn start(services: &[Service], libraries: Option<&Path>) -> Result<()> {
         }
         let who = Credentials::of(&s, &known)?;
         if s.oneshot {
-            let Some(status) = run_once(&s, &who)? else {
+            let Some(status) = run_once(&s, &who, runtime)? else {
                 skyward_sys::kmsg(&format!("{} did not end in {} seconds", s.path, ONESHOT_TIMEOUT.as_secs()))?;
                 continue;
             };
@@ -66,7 +67,8 @@ pub fn start(services: &[Service], libraries: Option<&Path>) -> Result<()> {
         }
         let waiting = s.clone();
         let name = Path::new(&s.path).file_name().map_or_else(|| s.path.clone(), |n| n.to_string_lossy().into_owned());
-        thread::Builder::new().name(name).spawn(move || supervise(&s, &who)).context("start a supervising thread")?;
+        let runtime = runtime.cloned();
+        thread::Builder::new().name(name).spawn(move || supervise(&s, &who, runtime.as_ref())).context("start a supervising thread")?;
         ready(&waiting)?;
     }
     Ok(())
@@ -199,12 +201,12 @@ fn ready(s: &Service) -> Result<()> {
     }
 }
 
-fn supervise(s: &Service, who: &Credentials) -> ! {
+fn supervise(s: &Service, who: &Credentials, runtime: Option<&Runtime>) -> ! {
     loop {
         let started = Instant::now();
         let ended = match running(&s.path) {
             Some(pid) => wait_for(pid).map(|()| format!("pid {pid}, left by an earlier recovery service, exited")),
-            None => run(s, who),
+            None => run(s, who, runtime),
         };
         let line = match ended {
             Ok(how) => format!("{}: {how}", s.path),
@@ -220,8 +222,8 @@ fn supervise(s: &Service, who: &Credentials) -> ! {
 /// Run a program that runs once to its end and give what it ended with; a
 /// program still running after [`ONESHOT_TIMEOUT`] is stopped, and `None` is
 /// given.
-fn run_once(s: &Service, who: &Credentials) -> Result<Option<std::process::ExitStatus>> {
-    let mut child = command(s, who).spawn().with_context(|| format!("start {}", s.path))?;
+fn run_once(s: &Service, who: &Credentials, runtime: Option<&Runtime>) -> Result<Option<std::process::ExitStatus>> {
+    let mut child = command(s, who, runtime).spawn().with_context(|| format!("start {}", s.path))?;
     let until = Instant::now() + ONESHOT_TIMEOUT;
     loop {
         if let Some(status) = child.try_wait().with_context(|| format!("wait for {}", s.path))? {
@@ -237,20 +239,28 @@ fn run_once(s: &Service, who: &Credentials) -> Result<Option<std::process::ExitS
 }
 
 /// Start the program and wait for it to end.
-fn run(s: &Service, who: &Credentials) -> Result<String> {
-    let mut child = command(s, who).spawn().with_context(|| format!("start {}", s.path))?;
+fn run(s: &Service, who: &Credentials, runtime: Option<&Runtime>) -> Result<String> {
+    let mut child = command(s, who, runtime).spawn().with_context(|| format!("start {}", s.path))?;
     let status = child.wait().context("wait for it")?;
     Ok(format!("pid {} ended: {status}", child.id()))
 }
 
 /// The program as it is started: with what it is given, from the top of the
 /// tree, reading and writing nothing of the recovery's, finding its
-/// libraries where it names them, and as `who`.
-fn command(s: &Service, who: &Credentials) -> Command {
-    let mut cmd = Command::new(&s.path);
+/// libraries where it names them, and as `who`. A program of the installed
+/// system is run by that system's own loader, with its libraries.
+fn command(s: &Service, who: &Credentials, runtime: Option<&Runtime>) -> Command {
+    let mut cmd = match runtime {
+        Some(runtime) => runtime.command(Path::new(&s.path)),
+        None => Command::new(&s.path),
+    };
     cmd.args(&s.args).current_dir("/").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    if !s.libraries.is_empty() {
-        cmd.env("LD_LIBRARY_PATH", s.libraries.join(":"));
+    let libraries = match runtime {
+        Some(runtime) => runtime.libraries_for(&s.libraries),
+        None => s.libraries.clone(),
+    };
+    if !libraries.is_empty() {
+        cmd.env("LD_LIBRARY_PATH", libraries.join(":"));
     }
     let who = who.clone();
     // Only system calls run between the fork and the exec, on what was
@@ -344,11 +354,20 @@ pub fn reachable() -> bool {
     }
 }
 
-/// A process already running `path`.
+/// A process already running `path`. A program of the installed system runs
+/// as the loader's first argument, so the path it was started from is looked
+/// for there too, not only as the process's own program.
 pub fn running(path: &str) -> Option<u32> {
     fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
         let pid: u32 = e.file_name().to_str()?.parse().ok()?;
-        (fs::read_link(e.path().join("exe")).ok()? == Path::new(path)).then_some(pid)
+        let proc = e.path();
+        if fs::read_link(proc.join("exe")).ok()? == Path::new(path) {
+            return Some(pid);
+        }
+        let cmdline = fs::read(proc.join("cmdline")).ok()?;
+        let mut words = cmdline.split(|b| *b == 0).filter(|w| !w.is_empty());
+        words.next()?;
+        (words.next()? == path.as_bytes()).then_some(pid)
     })
 }
 
