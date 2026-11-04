@@ -75,7 +75,16 @@ jobs:
             test -f "devices/$DEVICE.toml"
             echo "devices=$(jq -nc --arg device "$DEVICE" '[$device]')" >> "$GITHUB_OUTPUT"
           else
-            echo "devices=$(basename -s .toml devices/*.toml | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+            # A phone whose recovery is built without a stock package is
+            # built on its own, by hand: the stock steps below need one.
+            devices=$(python3 -c 'import glob, json, tomllib
+devices = []
+for path in sorted(glob.glob("devices/*.toml")):
+    with open(path, "rb") as f:
+        if "stock" in tomllib.load(f):
+            devices.append(path.rsplit("/", 1)[-1][:-5])
+print(json.dumps(devices))')
+            echo "devices=$devices" >> "$GITHUB_OUTPUT"
           fi
 
   recovery:

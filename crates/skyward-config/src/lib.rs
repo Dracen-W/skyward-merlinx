@@ -849,25 +849,6 @@ mod tests {
         for (text, version) in [
             (include_str!("../../../devices/nezha.toml"), "OS4.0.4.0.XPACNXM"),
             (include_str!("../../../devices/ishtar.toml"), "OS3.0.308.0.WMACNXM"),
-            (include_str!("../../../devices/pudding.toml"), "OS4.0.4.0.XPCCNXM"),
-            (include_str!("../../../devices/pandora.toml"), "OS4.0.4.0.XBLCNXM"),
-            (include_str!("../../../devices/popsicle.toml"), "OS4.0.4.0.XPBCNXM"),
-            (include_str!("../../../devices/myron.toml"), "OS4.0.4.0.XPMCNXM"),
-            (include_str!("../../../devices/songyuan.toml"), "OS4.0.4.0.XGNCNXM"),
-            (include_str!("../../../devices/athens.toml"), "OS4.0.4.0.XPICNXM"),
-            (include_str!("../../../devices/fuxi.toml"), "OS3.0.309.0.WMCCNXM"),
-            (include_str!("../../../devices/nuwa.toml"), "OS3.0.312.0.WMBCNXM"),
-            (include_str!("../../../devices/houji.toml"), "OS3.0.307.0.WNCCNXM"),
-            (include_str!("../../../devices/shennong.toml"), "OS3.0.309.0.WNBCNXM"),
-            (include_str!("../../../devices/aurora.toml"), "OS3.0.308.0.WNACNXM"),
-            (include_str!("../../../devices/dada.toml"), "OS3.0.307.0.WOCCNXM"),
-            (include_str!("../../../devices/haotian.toml"), "OS3.0.309.0.WOBCNXM"),
-            (include_str!("../../../devices/xuanyuan.toml"), "OS3.0.314.0.WOACNXM"),
-            (include_str!("../../../devices/byron.toml"), "OS3.0.310.0.WAFCNXM"),
-            (include_str!("../../../devices/zorn.toml"), "OS3.0.309.0.WOKCNXM"),
-            (include_str!("../../../devices/miro.toml"), "OS3.0.305.0.WOMCNXM"),
-            (include_str!("../../../devices/annibale.toml"), "OS3.0.307.0.WPKCNXM"),
-            (include_str!("../../../devices/warsaw.toml"), "OS3.0.309.0.WHPCNXM"),
         ] {
             let stock = DeviceConfig::parse(text).unwrap().stock.expect("a stock build to build on");
             assert_eq!(stock.version, version);

@@ -12,6 +12,7 @@ keystore.properties
 *.cer
 BRIEF.md
 NOTES.md
-TODO.md
 *.draft.md
 notes/
+.work-merlinx/
+Project_Infinity-X-*/
