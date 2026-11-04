@@ -636,6 +636,10 @@ mod tests {
         assert_eq!(teei.args.len(), 42, "the trusted apps the phone's own init names");
         let keymaster = cfg.services.iter().find(|s| s.path.contains("keymaster@4.1")).expect("the key service");
         assert_eq!(keymaster.ready_hardware_service.as_deref(), Some("android.hardware.keymaster@4.1::IKeymasterDevice/default"));
+        assert_eq!(keymaster.libraries[0], "/vendor/lib64", "its own partition's libraries come first");
+        let directory = cfg.services.iter().find(|s| s.path.ends_with("hwservicemanager")).expect("the older hardware services' directory");
+        assert_eq!(directory.path, "/system_ext/bin/hwservicemanager", "this recovery mounts system_ext at /system_ext");
+        assert_eq!(directory.libraries[0], "/mnt/system/system/lib64/bootstrap");
         let wlan = cfg.wlan.expect("the phone has WLAN");
         assert!(wlan.modules.is_empty(), "its driver is built into the kernel");
         assert_eq!(wlan.interface, "wlan0");

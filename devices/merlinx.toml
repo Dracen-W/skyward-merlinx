@@ -25,14 +25,20 @@ load = []
 # and with the capabilities its init script on the phone gives it, so that
 # what it makes in the data partition is whose it is when the phone runs
 # it, and the phone's own copy of it can still read and remove it.
+#
+# The vendor partition is the phone's Android 12 one, while the recovery's
+# own system is Android 17: the vendor programs are given their partition's
+# libraries first, and the recovery's only for what the vendor one does not
+# carry, such as libc and liblog.
 
 # The directory the phone's hardware services of the older kind register
 # with. A recovery carries none of it, so it is the installed system's own
 # program, running against the installed system's own libraries. It says it
-# is up by the property the services themselves wait on.
+# is up by the property the services themselves wait on. This recovery keeps
+# system_ext at /system_ext, as the phone's own table mounts it.
 [[service]]
-path = "/mnt/system_ext/bin/hwservicemanager"
-libraries = ["/mnt/system/system/lib64/bootstrap", "/mnt/system/system/lib64", "/mnt/system_ext/lib64"]
+path = "/system_ext/bin/hwservicemanager"
+libraries = ["/mnt/system/system/lib64/bootstrap", "/mnt/system/system/lib64", "/system_ext/lib64"]
 ready_property = "hwservicemanager.ready"
 user = "system"
 groups = ["system", "readproc"]
@@ -67,7 +73,7 @@ args = [
     "-t", "7b66512021214487ba710a51d7ea78fe",
     "-t", "09010000000000000000000000000000",
 ]
-libraries = ["/system/lib64", "/vendor/lib64"]
+libraries = ["/vendor/lib64", "/system/lib64"]
 ready_property = "vendor.soter.teei.init=INIT_OK"
 user = "system"
 groups = ["system"]
@@ -76,7 +82,7 @@ groups = ["system"]
 # wrapped in hardware. Keymaster 4.1, Beanpod over the TEEI secure world.
 [[service]]
 path = "/vendor/bin/hw/android.hardware.keymaster@4.1-service.beanpod"
-libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
+libraries = ["/vendor/lib64", "/vendor/lib64/hw", "/system/lib64"]
 ready_hardware_service = "android.hardware.keymaster@4.1::IKeymasterDevice/default"
 user = "system"
 groups = ["system", "drmrpc"]
@@ -86,7 +92,7 @@ groups = ["system", "drmrpc"]
 # key service wants before it will use a key that secret guards.
 [[service]]
 path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service"
-libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
+libraries = ["/vendor/lib64", "/vendor/lib64/hw", "/system/lib64"]
 ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
 user = "system"
 groups = ["system"]
@@ -97,7 +103,7 @@ groups = ["system"]
 # nvdata. They run in the order the phone's own init starts them.
 [[service]]
 path = "/vendor/bin/wmt_loader"
-libraries = ["/system/lib64", "/vendor/lib64"]
+libraries = ["/vendor/lib64", "/system/lib64"]
 oneshot = true
 user = "system"
 groups = ["system"]
@@ -105,13 +111,13 @@ groups = ["system"]
 [[service]]
 path = "/vendor/bin/wmt_launcher"
 args = ["-p", "/vendor/firmware/", "-o", "1"]
-libraries = ["/system/lib64", "/vendor/lib64"]
+libraries = ["/vendor/lib64", "/system/lib64"]
 user = "system"
 groups = ["system"]
 
 [[service]]
 path = "/vendor/bin/wlan_assistant"
-libraries = ["/system/lib64", "/vendor/lib64"]
+libraries = ["/vendor/lib64", "/system/lib64"]
 user = "wifi"
 groups = ["system", "gps", "inet"]
 
@@ -143,7 +149,7 @@ mounted = ["nvdata", "persist"]
 modules = []
 interface = "wlan0"
 supplicant = "/vendor/bin/hw/wpa_supplicant"
-libraries = ["/system/lib64", "/vendor/lib64"]
+libraries = ["/vendor/lib64", "/system/lib64"]
 service = "android.hardware.wifi.supplicant.ISupplicant/default"
 probe = "http://connectivitycheck.gstatic.com/generate_204"
 
