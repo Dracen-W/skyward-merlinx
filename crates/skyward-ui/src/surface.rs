@@ -698,6 +698,21 @@ pub mod fb {
         reserved: [u16; 2],
     }
 
+    // The kernel's layouts, checked where the compiler knows them: a field
+    // read out of place would take the line length or a channel offset from
+    // another field.
+    const _: () = {
+        assert!(std::mem::size_of::<Bitfield>() == 12);
+        assert!(std::mem::size_of::<VarScreeninfo>() == 160);
+        assert!(std::mem::offset_of!(VarScreeninfo, bits_per_pixel) == 24);
+        assert!(std::mem::offset_of!(VarScreeninfo, red) == 32);
+        assert!(std::mem::offset_of!(VarScreeninfo, reserved) == 144);
+        assert!(std::mem::size_of::<FixScreeninfo>() == 80);
+        assert!(std::mem::offset_of!(FixScreeninfo, smem_start) == 16);
+        assert!(std::mem::offset_of!(FixScreeninfo, line_length) == 48);
+        assert!(std::mem::offset_of!(FixScreeninfo, mmio_start) == 56);
+    };
+
     fn ioctl<T>(fd: RawFd, request: libc::c_int, arg: &mut T, what: &str) -> Result<()> {
         if unsafe { libc::ioctl(fd, request, arg as *mut T) } < 0 {
             Err(std::io::Error::last_os_error()).with_context(|| what.to_string())
