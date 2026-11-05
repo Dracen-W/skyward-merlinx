@@ -692,7 +692,16 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
         // tell the driver to start. A recovery runs both itself, so wait for
         // the assistant's word here before the writes that start the driver.
         if !cfg.writes.is_empty() {
-            if Path::new("/dev/wmtWifi").exists() {
+            let control = Path::new("/dev/wmtWifi");
+            let prop = |name: &str| skyward_sys::prop(name).unwrap_or_else(|| "unset".into());
+            skyward_sys::kmsg(&format!(
+                "WLAN before start: /dev/wmtWifi {}, driver.ready {}, formeta.ready {}, nvram.ready {}",
+                if control.exists() { "is there" } else { "is missing" },
+                prop("vendor.connsys.driver.ready"),
+                prop("vendor.connsys.formeta.ready"),
+                prop(NVRAM_READY),
+            ))?;
+            if control.exists() {
                 let until = Instant::now() + NVRAM_WAIT;
                 while !skyward_sys::prop(NVRAM_READY).is_some_and(|v| v == "1") && Instant::now() < until {
                     thread::sleep(Duration::from_millis(100));
@@ -703,8 +712,6 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
                 } else {
                     "the WLAN's NVRAM did not come; starting the driver anyway"
                 })?;
-            } else {
-                skyward_sys::kmsg("/dev/wmtWifi is missing; the WLAN driver did not load")?;
             }
         }
         for w in &cfg.writes {
