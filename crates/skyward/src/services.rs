@@ -1,4 +1,4 @@
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, Context, Result};
 use crate::runtime::Runtime;
 use procfs::process::{FDTarget, MMapPath, Process};
 use skyward_config::Service;
@@ -43,13 +43,24 @@ const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 /// not hold up the screen. Each runs as the user, in the groups and with the
 /// capabilities the phone's own init gives it.
 ///
+/// A program that fails, or never says it is ready, is written to the
+/// kernel log and the rest are still started: one vendor helper that the
+/// recovery's own boot cannot satisfy must not keep the screen's WLAN from
+/// starting.
+///
 /// `libraries` is a directory of shared libraries every one of them may
 /// need, searched after whatever it names itself.
 pub fn start(services: &[Service], libraries: Option<&Path>, runtime: Option<&Runtime>) -> Result<()> {
     let known = ueventd::accounts(&ueventd::PASSWD_FILES.iter().chain(&ueventd::GROUP_FILES).copied().collect::<Vec<_>>());
     for s in services {
+        // A program that ran before this one may have made the nodes it
+        // opens; give them the owners the phone's own rules give them.
+        if let Err(e) = ueventd::apply() {
+            skyward_sys::kmsg(&format!("device nodes not given their owners: {e:#}"))?;
+        }
         if !Path::new(&s.path).is_file() {
-            bail!("{} is missing; is its partition mounted?", s.path);
+            skyward_sys::kmsg(&format!("{} is missing; is its partition mounted?", s.path))?;
+            continue;
         }
         let mut s = s.clone();
         if let Some(dir) = libraries {
@@ -61,15 +72,20 @@ pub fn start(services: &[Service], libraries: Option<&Path>, runtime: Option<&Ru
                 skyward_sys::kmsg(&format!("{} did not end in {} seconds", s.path, ONESHOT_TIMEOUT.as_secs()))?;
                 continue;
             };
-            ensure!(status.success(), "{} {} ended: {status}", s.path, s.args.join(" "));
-            skyward_sys::kmsg(&format!("ran {} {}", s.path, s.args.join(" ")))?;
+            if status.success() {
+                skyward_sys::kmsg(&format!("ran {} {}", s.path, s.args.join(" ")))?;
+            } else {
+                skyward_sys::kmsg(&format!("{} {} ended: {status}", s.path, s.args.join(" ")))?;
+            }
             continue;
         }
         let waiting = s.clone();
         let name = Path::new(&s.path).file_name().map_or_else(|| s.path.clone(), |n| n.to_string_lossy().into_owned());
         let runtime = runtime.cloned();
         thread::Builder::new().name(name).spawn(move || supervise(&s, &who, runtime.as_ref())).context("start a supervising thread")?;
-        ready(&waiting)?;
+        if let Err(e) = ready(&waiting) {
+            skyward_sys::kmsg(&format!("{e:#}"))?;
+        }
     }
     Ok(())
 }

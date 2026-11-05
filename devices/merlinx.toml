@@ -160,6 +160,11 @@ mounted = ["nvdata", "persist"]
 # of the page the system asks.
 [wlan]
 modules = []
+# MediaTek's WLAN driver is idle until told to start: the phone's own WLAN
+# HAL writes "1" to its control node, and the driver then loads the chip's
+# firmware and makes wlan0. A recovery runs no HAL, so it is written here,
+# after the assistant above has given the driver the chip's NVRAM.
+writes = [{ path = "/dev/wmtWifi", value = "1" }]
 interface = "wlan0"
 supplicant = "/vendor/bin/hw/wpa_supplicant"
 libraries = ["/vendor/lib64", "/system/lib64"]

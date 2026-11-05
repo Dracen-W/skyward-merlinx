@@ -42,6 +42,16 @@ const WIFI: u32 = 1010;
 /// loading meanwhile.
 const INTERFACE_WAIT: Duration = Duration::from_secs(20);
 
+/// How long MediaTek's assistant may take to give the driver the chip's
+/// NVRAM before the driver is started without it. The driver takes the
+/// interface's MAC address from it, so starting the driver first would leave
+/// the interface with a made-up one.
+const NVRAM_WAIT: Duration = Duration::from_secs(5);
+
+/// The property MediaTek's assistant sets once it has given the driver the
+/// chip's NVRAM.
+const NVRAM_READY: &str = "vendor.mtk.nvram.ready";
+
 /// How long the supplicant may take to open its control socket.
 const SOCKET_WAIT: Duration = Duration::from_secs(10);
 
@@ -677,8 +687,38 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
         for path in skyward_modules::load(modules, &cfg.modules)? {
             skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
         }
+        // The phone's own init loads the driver after its assistant has
+        // given the chip its NVRAM, and only then does the system's own HAL
+        // tell the driver to start. A recovery runs both itself, so wait for
+        // the assistant's word here before the writes that start the driver.
+        if !cfg.writes.is_empty() {
+            if Path::new("/dev/wmtWifi").exists() {
+                let until = Instant::now() + NVRAM_WAIT;
+                while !skyward_sys::prop(NVRAM_READY).is_some_and(|v| v == "1") && Instant::now() < until {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                let ready = skyward_sys::prop(NVRAM_READY).is_some_and(|v| v == "1");
+                skyward_sys::kmsg(if ready {
+                    "the WLAN's NVRAM is in the driver"
+                } else {
+                    "the WLAN's NVRAM did not come; starting the driver anyway"
+                })?;
+            } else {
+                skyward_sys::kmsg("/dev/wmtWifi is missing; the WLAN driver did not load")?;
+            }
+        }
         for w in &cfg.writes {
-            fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
+            // The phone's own programs write a command to a character device
+            // with the NUL that ends it; a sysfs switch takes the value
+            // alone.
+            let mut value = w.value.clone().into_bytes();
+            if w.path.starts_with("/dev/") {
+                value.push(0);
+            }
+            fs::write(&w.path, value).with_context(|| format!("write {} to {}", w.value, w.path))?;
+        }
+        if !cfg.writes.is_empty() {
+            skyward_sys::kmsg(&format!("started the WLAN driver; waiting for {}", cfg.interface))?;
         }
         let until = Instant::now() + INTERFACE_WAIT;
         while !net.exists() {

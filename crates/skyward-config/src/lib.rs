@@ -662,6 +662,7 @@ mod tests {
         assert_eq!(directory.libraries[0], "/mnt/system/system/lib64/bootstrap");
         let wlan = cfg.wlan.expect("the phone has WLAN");
         assert!(wlan.modules.is_empty(), "its driver is built into the kernel");
+        assert_eq!(wlan.writes, [Write { path: "/dev/wmtWifi".into(), value: "1".into() }], "its own HAL is not run, so the driver is told to start here");
         assert_eq!(wlan.interface, "wlan0");
         assert_eq!(wlan.probe, "http://connectivitycheck.gstatic.com/generate_204");
         assert!(cfg.services.iter().any(|s| s.path.ends_with("wlan_assistant")), "the chip's NVRAM is read by the phone's own assistant");
