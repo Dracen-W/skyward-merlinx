@@ -225,7 +225,9 @@ fn metrics(w: u32, h: u32, px_per_dp: f32) -> Metrics {
         knob: dp(19.3),
         slider_h: dp(27.5),
         slider_knob: dp(18.7),
-        status_x: dp(37.0),
+        // The clock starts clear of merlinx's top-left camera hole, whose
+        // right edge lies a little inside 37 dp.
+        status_x: dp(40.0),
         status_right: dp(40.0),
         status_bolt_right: dp(36.0),
         status_cy: dp(25.7),

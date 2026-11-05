@@ -1050,9 +1050,10 @@ pub const SCREEN_OFF: [Option<u64>; 7] = [Some(15_000), Some(30_000), Some(60_00
 /// The time zones the clock and the times on the pages can keep, in the
 /// order their page lists them: the name, the cities it covers, and the
 /// zone's name in the tz database.
-pub const TIME_ZONES: [(Text, Text, &str); 9] = [
+pub const TIME_ZONES: [(Text, Text, &str); 10] = [
     (["中国标准时间", "中國標準時間", "China Standard Time"], ["北京、上海", "北京、上海", "Beijing, Shanghai"], "Asia/Shanghai"),
     (["香港时间", "香港時間", "Hong Kong Time"], ["香港", "香港", "Hong Kong"], "Asia/Hong_Kong"),
+    (["新加坡时间", "新加坡時間", "Singapore Time"], ["新加坡", "新加坡", "Singapore"], "Asia/Singapore"),
     (["台北时间", "台北時間", "Taipei Time"], ["台北", "台北", "Taipei"], "Asia/Taipei"),
     (["日本标准时间", "日本標準時間", "Japan Standard Time"], ["东京", "東京", "Tokyo"], "Asia/Tokyo"),
     (["协调世界时", "世界標準時間", "Coordinated Universal Time"], ["UTC", "UTC", "UTC"], "UTC"),

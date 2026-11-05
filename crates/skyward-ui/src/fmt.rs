@@ -1571,6 +1571,8 @@ mod tests {
         assert_eq!(datetime(HANS, summer, zone("America/Los_Angeles")), "2026年7月1日 05:00");
         assert_eq!(clock(summer, zone("Asia/Tokyo")), "21:00");
         assert_eq!(clock(winter, zone("Asia/Shanghai")), "20:00", "China keeps no summer time");
+        assert_eq!(clock(summer, zone("Asia/Singapore")), "20:00", "Singapore keeps no summer time");
+        assert_eq!(clock(winter, zone("Asia/Singapore")), "20:00");
         // New York goes over to summer time at 2:00 on 2026-03-08.
         let before = 1_772_953_200 - 60;
         assert_eq!((clock(before, zone("America/New_York")), clock(before + 60, zone("America/New_York"))), ("01:59".into(), "03:00".into()));
