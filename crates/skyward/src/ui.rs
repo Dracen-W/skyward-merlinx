@@ -1045,7 +1045,14 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
     let mut touch_known = false;
     // adbd and fastbootd ask over it to go over to fastboot and back.
     let control = Control::open()?;
-    let mut haptics = cfg.haptics.as_ref().map(Haptics::open).transpose()?;
+    // A motor the phone does not hand over must not keep the screen away.
+    let mut haptics = match cfg.haptics.as_ref().map(Haptics::open).transpose() {
+        Ok(haptics) => haptics,
+        Err(e) => {
+            skyward_sys::kmsg(&format!("haptics not started: {e:#}"))?;
+            None
+        }
+    };
     let mut backlight = Backlight::open()?;
     skyward_sys::kmsg(&format!("the backlight is {}", if backlight.is_some() { "under control" } else { "the bootloader's" }))?;
     let first = match &request.work {

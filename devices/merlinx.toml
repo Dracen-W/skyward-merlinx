@@ -21,6 +21,15 @@ sources = ["vendor"]
 # and the Novatek NT36672A/D. The vendor partition holds no modules to load.
 load = []
 
+# The motor is the LED class device MediaTek's vibrator driver registers from
+# the device tree's `mediatek,vibrator` node. It takes a length in
+# milliseconds and then an activate flag, and stops the motor itself. A click
+# at the lightest setting runs for half as long as one at the strongest.
+[haptics]
+device = "/sys/class/leds/vibrator"
+duration = 30
+strength = { lightest = 0.5, strongest = 1.0 }
+
 # Each of the phone's own programs below runs as the user, in the groups
 # and with the capabilities its init script on the phone gives it, so that
 # what it makes in the data partition is whose it is when the phone runs
@@ -112,6 +121,10 @@ groups = ["system"]
 path = "/vendor/bin/wmt_launcher"
 args = ["-p", "/vendor/firmware/", "-o", "1"]
 libraries = ["/vendor/lib64", "/system/lib64"]
+# The launcher downloads the chip's own patch and says so once it has.
+# The assistant must not give the chip its NVRAM and its WIFI command
+# before that, or the driver never asks for the WLAN firmware.
+ready_property = "vendor.connsys.formeta.ready=yes"
 user = "system"
 groups = ["system"]
 

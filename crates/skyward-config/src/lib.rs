@@ -190,9 +190,11 @@ pub struct Wipe {
 /// The data partition, which the folders erasing takes in are in.
 const DATA: &str = "/data";
 
-/// The vibration motor's click, played through the kernel's force-feedback
-/// events: a waveform its driver keeps, or one made from samples at the
-/// motor's resonant frequency, which the driver plays as they are given.
+/// The vibration motor's click, played either through the kernel's
+/// force-feedback events -- a waveform its driver keeps, or one made from
+/// samples at the motor's resonant frequency, which the driver plays as
+/// they are given -- or through the LED class device MediaTek's vibrator
+/// driver registers, which runs the motor for a time given in milliseconds.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Haptics {
     /// The driver's number for a click waveform it keeps, on phones whose
@@ -204,7 +206,20 @@ pub struct Haptics {
     /// from samples.
     #[serde(default)]
     pub resonance: Option<String>,
+    /// The folder of the motor's LED class device, on phones whose driver
+    /// takes a duration and an activate flag rather than a force-feedback
+    /// effect.
+    #[serde(default)]
+    pub device: Option<String>,
+    /// How long a click runs at the strongest setting, in milliseconds, on
+    /// phones whose click is timed. Lighter settings run it for less.
+    #[serde(default = "default_click_ms")]
+    pub duration: u32,
     pub strength: Strength,
+}
+
+fn default_click_ms() -> u32 {
+    30
 }
 
 /// How strongly the click plays, each as a share of the most its waveform
@@ -530,13 +545,18 @@ impl DeviceConfig {
             ensure!(plain && !folder.is_empty(), "[backup] data_skipped: {folder} is not a path from the top of {DATA}");
         }
         if let Some(haptics) = &cfg.haptics {
+            let kinds = usize::from(haptics.click.is_some()) + usize::from(haptics.resonance.is_some()) + usize::from(haptics.device.is_some());
             ensure!(
-                haptics.click.is_some() != haptics.resonance.is_some(),
-                "[haptics] names either a waveform the driver keeps or the file it says the motor's resonant frequency in"
+                kinds == 1,
+                "[haptics] names one click: a waveform the driver keeps, the file it says the motor's resonant frequency in, or the folder of the motor's LED class device"
             );
             if let Some(file) = &haptics.resonance {
                 ensure!(Path::new(file).is_absolute(), "[haptics] resonance: {file} is not an absolute path");
             }
+            if let Some(dir) = &haptics.device {
+                ensure!(Path::new(dir).is_absolute(), "[haptics] device: {dir} is not an absolute path");
+            }
+            ensure!(haptics.duration > 0, "[haptics] duration: {} is not a length of time", haptics.duration);
             let Strength { lightest, strongest } = haptics.strength;
             ensure!(
                 0.0 < lightest && lightest < strongest && strongest <= 1.0,
@@ -645,25 +665,35 @@ mod tests {
         assert_eq!(wlan.interface, "wlan0");
         assert_eq!(wlan.probe, "http://connectivitycheck.gstatic.com/generate_204");
         assert!(cfg.services.iter().any(|s| s.path.ends_with("wlan_assistant")), "the chip's NVRAM is read by the phone's own assistant");
+        let launcher = cfg.services.iter().find(|s| s.path.ends_with("wmt_launcher")).expect("the chip's patch is downloaded by the phone's own launcher");
+        assert_eq!(launcher.ready_property.as_deref(), Some("vendor.connsys.formeta.ready=yes"), "the assistant waits for the patch");
+        let haptics = cfg.haptics.expect("the phone has a motor");
+        assert_eq!((haptics.click, haptics.resonance.as_deref(), haptics.device.as_deref()), (None, None, Some("/sys/class/leds/vibrator")));
+        assert_eq!(haptics.duration, 30, "a click at the strongest setting runs for 30 ms");
     }
 
     #[test]
     fn ishtar_clicks_with_a_waveform_its_driver_keeps() {
         let cfg = DeviceConfig::parse(include_str!("../../../devices/ishtar.toml")).unwrap();
         let haptics = cfg.haptics.expect("the 13 Ultra has a motor");
-        assert_eq!((haptics.click, haptics.resonance), (Some(0), None));
+        assert_eq!((haptics.click, haptics.resonance, haptics.device), (Some(0), None, None));
         assert_eq!(haptics.strength, Strength { lightest: 0.5, strongest: 1.0 });
     }
 
     #[test]
-    fn a_click_is_kept_or_made_and_its_strengths_rise() {
+    fn a_click_is_kept_made_or_timed_and_its_strengths_rise() {
         let with = |body: &str| DeviceConfig::parse(&format!("[device]\ncodename = \"x\"\n[haptics]\n{body}\n"));
         let strength = "strength = { lightest = 0.25, strongest = 1.0 }";
         assert!(with(&format!("click = 0\n{strength}")).is_ok());
         assert!(with(&format!("resonance = \"/sys/class/qcom-haptics/lra_frequency_hz\"\n{strength}")).is_ok());
-        assert!(with(strength).is_err(), "a click of neither kind");
-        assert!(with(&format!("click = 0\nresonance = \"/sys/f\"\n{strength}")).is_err(), "a click of both kinds");
+        assert!(with(&format!("device = \"/sys/class/leds/vibrator\"\n{strength}")).is_ok());
+        assert!(with(&format!("device = \"/sys/class/leds/vibrator\"\nduration = 25\n{strength}")).is_ok());
+        assert!(with(strength).is_err(), "a click of no kind");
+        assert!(with(&format!("click = 0\nresonance = \"/sys/f\"\n{strength}")).is_err(), "a click of more than one kind");
+        assert!(with(&format!("device = \"/sys/class/leds/vibrator\"\nclick = 0\n{strength}")).is_err(), "a timed click of two kinds");
         assert!(with(&format!("resonance = \"sys/f\"\n{strength}")).is_err(), "a file named from nowhere");
+        assert!(with(&format!("device = \"sys/class/leds/vibrator\"\n{strength}")).is_err(), "a folder named from nowhere");
+        assert!(with(&format!("device = \"/sys/class/leds/vibrator\"\nduration = 0\n{strength}")).is_err(), "a click of no length");
         assert!(with("click = 0").is_err(), "a click without its strengths");
         for (lightest, strongest) in [(0.0, 0.5), (0.5, 0.5), (0.5, 0.25), (0.25, 1.5)] {
             let s = format!("click = 0\nstrength = {{ lightest = {lightest:?}, strongest = {strongest:?} }}");

@@ -30,13 +30,20 @@ const BRAKE_SWINGS: f32 = 1.5;
 /// the click is taken away. So each click is loaded as it is played, at the
 /// strength the slider gives, and taken away once it has played out.
 pub struct Haptics {
-    dev: File,
-    click: Click,
+    motor: Motor,
     strength: Strength,
     /// The click playing, by its slot and its count, until it is taken
     /// away; a click taken away early by the next is not taken away again.
     playing: Arc<Mutex<Option<(i16, u64)>>>,
     clicks: u64,
+}
+
+/// How the motor is driven: through force-feedback effects, or through the
+/// LED class device MediaTek's vibrator driver registers, which runs the
+/// motor for a time and stops it itself.
+enum Motor {
+    Effects { dev: File, click: Click },
+    Timed { dir: PathBuf, full: Duration },
 }
 
 /// What a click is.
@@ -53,48 +60,68 @@ impl Haptics {
     /// fills the driver's queue with what it plays, so the click is loaded
     /// only as it is played.
     pub fn open(cfg: &skyward_config::Haptics) -> Result<Haptics> {
-        let (path, dev) = motor()?;
-        let click = match (cfg.click, &cfg.resonance) {
-            (Some(id), _) => {
+        let motor = match (cfg.click, &cfg.resonance, &cfg.device) {
+            (Some(id), None, None) => {
+                let (path, dev) = motor()?;
                 eprintln!("haptics {}: clicks with waveform {id}", path.display());
-                Click::Kept(id)
+                Motor::Effects { dev, click: Click::Kept(id) }
             }
-            (None, Some(file)) => {
+            (None, Some(file), None) => {
+                let (path, dev) = motor()?;
                 let hz = resonance(file)?;
                 eprintln!("haptics {}: clicks made for a motor swinging at {hz} Hz", path.display());
-                Click::Made(made(hz))
+                Motor::Effects { dev, click: Click::Made(made(hz)) }
             }
-            (None, None) => unreachable!("the configuration names a click of one kind"),
+            (None, None, Some(dir)) => {
+                let dir = PathBuf::from(dir);
+                ensure!(dir.join("activate").is_file(), "{} has no activate file", dir.display());
+                eprintln!("haptics {}: clicks timed at up to {} ms", dir.display(), cfg.duration);
+                Motor::Timed { dir, full: Duration::from_millis(u64::from(cfg.duration)) }
+            }
+            _ => unreachable!("the configuration names a click of one kind"),
         };
-        Ok(Haptics { dev, click, strength: cfg.strength, playing: Arc::new(Mutex::new(None)), clicks: 0 })
+        Ok(Haptics { motor, strength: cfg.strength, playing: Arc::new(Mutex::new(None)), clicks: 0 })
     }
 
     /// One short click at the strength the slider's `position` gives, after
     /// taking away one still playing. Gives how long it plays.
     pub fn click(&mut self, position: f32) -> Result<Duration> {
-        let mut playing = self.playing.lock().expect("no thread panics while it holds the click playing");
-        if let Some((slot, _)) = playing.take() {
-            erase(&self.dev, slot).context("take away the click still playing")?;
-        }
-        let loaded = upload(&self.dev, &self.click, share(&self.strength, position)).context("load the click")?;
-        play(&mut self.dev, loaded.slot).context("play the click")?;
-        self.clicks += 1;
-        let this = (loaded.slot, self.clicks);
-        *playing = Some(this);
-        drop(playing);
-        let dev = self.dev.try_clone().context("share the motor")?;
-        let (playing, length) = (self.playing.clone(), loaded.length);
-        std::thread::spawn(move || {
-            std::thread::sleep(length);
-            let mut playing = playing.lock().expect("no thread panics while it holds the click playing");
-            if *playing == Some(this) {
-                *playing = None;
-                if let Err(e) = erase(&dev, this.0) {
-                    eprintln!("take away the click: {e}");
+        let share = share(&self.strength, position);
+        match &mut self.motor {
+            Motor::Effects { dev, click } => {
+                let mut playing = self.playing.lock().expect("no thread panics while it holds the click playing");
+                if let Some((slot, _)) = playing.take() {
+                    erase(dev, slot).context("take away the click still playing")?;
                 }
+                let loaded = upload(dev, click, share).context("load the click")?;
+                play(dev, loaded.slot).context("play the click")?;
+                self.clicks += 1;
+                let this = (loaded.slot, self.clicks);
+                *playing = Some(this);
+                drop(playing);
+                let dev = dev.try_clone().context("share the motor")?;
+                let (playing, length) = (self.playing.clone(), loaded.length);
+                std::thread::spawn(move || {
+                    std::thread::sleep(length);
+                    let mut playing = playing.lock().expect("no thread panics while it holds the click playing");
+                    if *playing == Some(this) {
+                        *playing = None;
+                        if let Err(e) = erase(&dev, this.0) {
+                            eprintln!("take away the click: {e}");
+                        }
+                    }
+                });
+                Ok(length)
             }
-        });
-        Ok(length)
+            Motor::Timed { dir, full } => {
+                // The driver stops the motor itself once the time is up.
+                let length = full.mul_f32(share);
+                let millis = length.as_millis().max(1);
+                fs::write(dir.join("duration"), millis.to_string()).with_context(|| format!("set the click's length in {}", dir.display()))?;
+                fs::write(dir.join("activate"), "1").with_context(|| format!("start the click through {}", dir.display()))?;
+                Ok(length)
+            }
+        }
     }
 }
 
