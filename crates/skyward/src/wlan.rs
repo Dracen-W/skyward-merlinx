@@ -53,7 +53,7 @@ const NVRAM_WAIT: Duration = Duration::from_secs(5);
 const NVRAM_READY: &str = "vendor.mtk.nvram.ready";
 
 /// How long the supplicant may take to open its control socket.
-const SOCKET_WAIT: Duration = Duration::from_secs(10);
+const SOCKET_WAIT: Duration = Duration::from_secs(20);
 
 /// How long the supplicant gets to end once asked to.
 const END_WAIT: Duration = Duration::from_secs(3);
@@ -772,6 +772,10 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>, runtime: Option<&Run
     if socket.exists() {
         fs::remove_file(&socket).with_context(|| format!("take away {}", socket.display()))?;
     }
+    // What the supplicant says as it starts, kept for when it does not: a
+    // vendor build that cannot find a library or a driver says why there.
+    let log = home.join("wpa_supplicant.log");
+    let log_file = fs::File::create(&log).with_context(|| format!("make {}", log.display()))?;
     let mut path: Vec<String> = cfg.libraries.clone();
     if let Some(dir) = libraries {
         path.push(dir.to_string_lossy().into_owned());
@@ -784,27 +788,37 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>, runtime: Option<&Run
         None => Process::new(&cfg.supplicant),
     };
     let mut child = command
-        .args(["-i", &cfg.interface, "-D", "nl80211", "-c"])
+        .args(["-i", &cfg.interface, "-D", "nl80211", "-O"])
+        .arg(&sockets)
+        .arg("-c")
         .arg(&settings)
+        .arg("-dd")
         .env("LD_LIBRARY_PATH", path.join(":"))
         .current_dir("/")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(log_file))
         .spawn()
         .with_context(|| format!("start {}", cfg.supplicant))?;
     let until = Instant::now() + SOCKET_WAIT;
     while !socket.exists() {
         if let Some(status) = child.try_wait().context("look at wpa_supplicant")? {
-            bail!("wpa_supplicant ended as it started: {status}");
+            bail!("wpa_supplicant ended as it started: {status}; {}", last_lines(&log, 20));
         }
         if Instant::now() >= until {
             end(&mut child, None);
-            bail!("wpa_supplicant opened no control socket in {} seconds", SOCKET_WAIT.as_secs());
+            bail!("wpa_supplicant opened no control socket in {} seconds; {}", SOCKET_WAIT.as_secs(), last_lines(&log, 20));
         }
         thread::sleep(Duration::from_millis(100));
     }
     Ok(child)
+}
+
+/// The last `count` lines of a log, on one line for the kernel log.
+fn last_lines(path: &Path, count: usize) -> String {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(count)..].join(" | ")
 }
 
 /// End the supplicant: asked to, where it can be, and killed after a while.
