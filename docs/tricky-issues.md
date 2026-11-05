@@ -101,7 +101,12 @@ The WLAN driver is built into the kernel; the vendor partition carries no WLAN
 
 The kernel logs `WLAN-GEN4 driver init`, but no firmware download happens and
 `wlan0` never appears. Manual `WIFI` / `WR-BUF:WIFI` writes return `EIO` / `524`.
-This is still open; see the TODO.
+
+`wmt_launcher` downloads the chip's own patch and then sets
+`vendor.connsys.formeta.ready=yes`. `wlan_assistant` must wait for that before
+writing NVRAM and the `WIFI` command, or the driver never asks for the WLAN
+firmware. The service now declares that property as its ready signal. This is
+still being verified; see the TODO.
 
 ## 9. A-only devices
 
@@ -127,3 +132,15 @@ The installed system's fstab mounts `system` at `/mnt/system`, `system_ext` at
 
 Do not assume the recovery's own mount points. If a partition is not mounted
 where a service expects it, mount it manually.
+
+## 13. Vibration is an LED class device, not force feedback
+
+MediaTek's `mtk_vibrator` driver registers the motor as the LED class device
+`/sys/class/leds/vibrator`, with `duration` (milliseconds) and `activate`
+attributes, not as an input force-feedback device. The recovery's original
+haptics only spoke force feedback, so merlinx had no working click.
+
+`[haptics] device = "/sys/class/leds/vibrator"` now selects a timed backend: a
+click writes `duration` and then `activate=1`, and the driver stops the motor
+itself when the time is up. A missing motor is not fatal: the UI logs it and
+carries on without haptics.

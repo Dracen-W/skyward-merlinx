@@ -90,7 +90,12 @@ WLAN 驱动编译进内核；vendor 分区里没有 WLAN 的 `.ko`。MediaTek �
   `/dev/wmtWifi`，并设置 `vendor.mtk.nvram.ready=1`
 
 内核日志出现 `WLAN-GEN4 driver init`，但没有下载固件，`wlan0` 始终不出现。
-手动写 `WIFI` / `WR-BUF:WIFI` 返回 `EIO` / `524`。这个问题仍未解决，见 TODO。
+手动写 `WIFI` / `WR-BUF:WIFI` 返回 `EIO` / `524`。
+
+`wmt_launcher` 下载芯片自己的 patch，然后设置
+`vendor.connsys.formeta.ready=yes`。`wlan_assistant` 必须等它之后再写 NVRAM
+和 `WIFI` 命令，否则驱动不会去请求 WLAN 固件。现在服务把该属性声明为就绪
+信号。这一改动仍待真机验证，见 TODO。
 
 ## 9. A-only 机型
 
@@ -115,3 +120,14 @@ merlinx 使用旧式 boot image（v0/v1/v2），不是较新的 boot image 格�
 `persist` 在 `/mnt/vendor/persist`。
 
 不要假设 recovery 自己的挂载点。如果某个分区没有挂在服务期望的位置，手动挂载它。
+
+## 13. 振动是 LED class 设备，不是 force feedback
+
+MediaTek 的 `mtk_vibrator` 驱动把马达注册成 LED class 设备
+`/sys/class/leds/vibrator`，提供 `duration`（毫秒）和 `activate` 属性，而不是
+输入子系统的 force feedback 设备。recovery 原来的触感只走 force feedback，
+所以在 merlinx 上点击没有反应。
+
+`[haptics] device = "/sys/class/leds/vibrator"` 现在选择按时间驱动的后端：
+一次点击先写 `duration`，再写 `activate=1`，时间到了由驱动自己停住马达。
+马达缺失不是致命错误：界面会记日志，然后不带触感继续运行。

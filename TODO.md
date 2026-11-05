@@ -7,11 +7,12 @@ Unfinished work on this fork. This is the English version; see
 
 - [ ] **WLAN**: the MediaTek stack starts (`wmt_loader`, `wmt_launcher`,
       `wlan_assistant`), the kernel logs `WLAN-GEN4 driver init`, but no firmware
-      is downloaded and `wlan0` never appears. Find the correct trigger for the
-      firmware download (`ro.bootmode`? correct `WR-BUF:WIFI` format? vendor
-      `wifi-service`?).
-- [ ] **Vibration**: not investigated yet. Check `[haptics]` in the device
-      config, the sysfs nodes and `Haptics::open`.
+      is downloaded and `wlan0` never appears. The launcher now reports
+      `vendor.connsys.formeta.ready=yes` and the assistant waits for it before
+      writing NVRAM and `WIFI`; this still needs testing on the phone.
+- [ ] **Vibration**: the motor is MediaTek's LED class device at
+      `/sys/class/leds/vibrator`, and `[haptics]` now drives it with `duration`
+      and `activate`. Needs testing on the phone (a click is 15–30 ms).
 - [ ] **Decryption**: blocked on TEE. Keymaster blocks in `soter_open` while
       opening `/dev/isee_tee0`. Needs a working `teei_daemon`/TEE setup. Cannot
       be tested end-to-end until a data partition exists (the userdata partition
@@ -20,9 +21,9 @@ Unfinished work on this fork. This is the English version; see
 
 ## UI
 
-- [ ] **Clock position**: the clock is too close to the top-right camera cutout.
-      Move it left.
-- [ ] Add **Asia/Singapore** to `TIME_ZONES` in `crates/skyward-ui/src/app.rs`
+- [x] **Clock position**: moved to 40 dp from the left, clear of merlinx's
+      top-left camera hole.
+- [x] Add **Asia/Singapore** to `TIME_ZONES` in `crates/skyward-ui/src/app.rs`
       and cover it with a test.
 
 ## Features to verify
