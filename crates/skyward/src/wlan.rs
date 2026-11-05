@@ -776,6 +776,9 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>, runtime: Option<&Run
     // vendor build that cannot find a library or a driver says why there.
     let log = home.join("wpa_supplicant.log");
     let log_file = fs::File::create(&log).with_context(|| format!("make {}", log.display()))?;
+    // wpa_supplicant's own messages go to stdout, and only the loader's
+    // failures to stderr, so both are kept.
+    let log_err = log_file.try_clone().with_context(|| format!("keep {}", log.display()))?;
     let mut path: Vec<String> = cfg.libraries.clone();
     if let Some(dir) = libraries {
         path.push(dir.to_string_lossy().into_owned());
@@ -796,8 +799,8 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>, runtime: Option<&Run
         .env("LD_LIBRARY_PATH", path.join(":"))
         .current_dir("/")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::from(log_file))
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_err))
         .spawn()
         .with_context(|| format!("start {}", cfg.supplicant))?;
     let until = Instant::now() + SOCKET_WAIT;
