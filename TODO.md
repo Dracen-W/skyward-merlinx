@@ -7,9 +7,11 @@ Unfinished work on this fork. This is the English version; see
 
 - [ ] **WLAN**: the MediaTek stack starts (`wmt_loader`, `wmt_launcher`,
       `wlan_assistant`), the kernel logs `WLAN-GEN4 driver init`, but no firmware
-      is downloaded and `wlan0` never appears. The launcher now reports
-      `vendor.connsys.formeta.ready=yes` and the assistant waits for it before
-      writing NVRAM and `WIFI`; this still needs testing on the phone.
+      is downloaded and `wlan0` never appears. The missing step was the phone's
+      own WLAN HAL: `libwifi-hal-mtk.so` writes `"1"` to `/dev/wmtWifi` to start
+      the driver. The recovery now writes it itself after the assistant reports
+      `vendor.mtk.nvram.ready=1`, and one failing vendor helper no longer stops
+      the rest. This still needs testing on the phone.
 - [ ] **Vibration**: the motor is MediaTek's LED class device at
       `/sys/class/leds/vibrator`, and `[haptics]` now drives it with `duration`
       and `activate`. Needs testing on the phone (a click is 15–30 ms).
@@ -21,7 +23,7 @@ Unfinished work on this fork. This is the English version; see
 
 ## UI
 
-- [x] **Clock position**: moved to 40 dp from the left, clear of merlinx's
+- [x] **Clock position**: moved to 50 dp from the left, clear of merlinx's
       top-left camera hole.
 - [x] Add **Asia/Singapore** to `TIME_ZONES` in `crates/skyward-ui/src/app.rs`
       and cover it with a test.

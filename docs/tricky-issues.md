@@ -87,7 +87,7 @@ The recovery reads the Qualcomm-only backlight node only where it exists, and
 falls back to the LED class device. Backlight is optional: a missing node must not
 hang the UI.
 
-## 8. WLAN needs the MediaTek stack, and still does not come up
+## 8. WLAN needs the MediaTek stack, and the driver needs starting
 
 The WLAN driver is built into the kernel; the vendor partition carries no WLAN
 `.ko`. The MediaTek stack needs:
@@ -99,14 +99,20 @@ The WLAN driver is built into the kernel; the vendor partition carries no WLAN
   `/mnt/vendor/nvdata/APCFG/APRDEB` to `/dev/wmtWifi` and sets
   `vendor.mtk.nvram.ready=1`
 
-The kernel logs `WLAN-GEN4 driver init`, but no firmware download happens and
-`wlan0` never appears. Manual `WIFI` / `WR-BUF:WIFI` writes return `EIO` / `524`.
+The kernel logs `WLAN-GEN4 driver init`, but the driver stays idle and no
+firmware is downloaded. In the stock system it is the WLAN HAL
+(`/vendor/lib64/libwifi-hal-mtk.so`) that starts it: its `wifi_load_driver`
+opens `/dev/wmtWifi` and writes `"1"` with the NUL that ends it. The driver then
+loads the chip's firmware and makes `wlan0`. A recovery runs no HAL, so
+`[wlan] writes` in `devices/merlinx.toml` writes the same byte itself, after
+`vendor.mtk.nvram.ready=1` so the interface gets its own MAC address. Manual
+`WIFI` / `WR-BUF:WIFI` writes are not the same command and return `EIO` / `524`.
 
 `wmt_launcher` downloads the chip's own patch and then sets
-`vendor.connsys.formeta.ready=yes`. `wlan_assistant` must wait for that before
-writing NVRAM and the `WIFI` command, or the driver never asks for the WLAN
-firmware. The service now declares that property as its ready signal. This is
-still being verified; see the TODO.
+`vendor.connsys.formeta.ready=yes`; `wlan_assistant` must wait for that before
+writing NVRAM. The service declares that property as its ready signal. A vendor
+helper that fails or never becomes ready is now logged and skipped instead of
+stopping every service after it. This is still being verified; see the TODO.
 
 ## 9. A-only devices
 

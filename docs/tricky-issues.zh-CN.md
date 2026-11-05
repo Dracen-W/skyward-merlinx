@@ -79,7 +79,7 @@ merlinx 的 `/sys/class/backlight` 是空的。背光是
 recovery 只在 Qualcomm 专用的背光节点存在时读取它，否则回退到 LED class 设备。
 背光是可选的：节点缺失不能让界面卡住。
 
-## 8. WLAN 需要 MediaTek 整套栈，而且目前仍未起来
+## 8. WLAN 需要 MediaTek 整套栈，而且驱动还需要被启动
 
 WLAN 驱动编译进内核；vendor 分区里没有 WLAN 的 `.ko`。MediaTek 的栈需要：
 
@@ -89,13 +89,18 @@ WLAN 驱动编译进内核；vendor 分区里没有 WLAN 的 `.ko`。MediaTek �
 - `wlan_assistant`：把 NVRAM 从 `/mnt/vendor/nvdata/APCFG/APRDEB` 写入
   `/dev/wmtWifi`，并设置 `vendor.mtk.nvram.ready=1`
 
-内核日志出现 `WLAN-GEN4 driver init`，但没有下载固件，`wlan0` 始终不出现。
-手动写 `WIFI` / `WR-BUF:WIFI` 返回 `EIO` / `524`。
+内核日志出现 `WLAN-GEN4 driver init`，但驱动一直空闲，也不会下载固件。在官方
+系统里，启动驱动的是 WLAN HAL（`/vendor/lib64/libwifi-hal-mtk.so`）：它的
+`wifi_load_driver` 会打开 `/dev/wmtWifi` 并写入带结尾 NUL 的 `"1"`。驱动随后
+加载芯片固件并创建 `wlan0`。recovery 不运行 HAL，所以由
+`devices/merlinx.toml` 的 `[wlan] writes` 自己写入同样的字节，并且放在
+`vendor.mtk.nvram.ready=1` 之后，让接口拿到自己的 MAC 地址。手动写
+`WIFI` / `WR-BUF:WIFI` 不是同一条命令，会返回 `EIO` / `524`。
 
 `wmt_launcher` 下载芯片自己的 patch，然后设置
-`vendor.connsys.formeta.ready=yes`。`wlan_assistant` 必须等它之后再写 NVRAM
-和 `WIFI` 命令，否则驱动不会去请求 WLAN 固件。现在服务把该属性声明为就绪
-信号。这一改动仍待真机验证，见 TODO。
+`vendor.connsys.formeta.ready=yes`；`wlan_assistant` 必须等它之后再写 NVRAM。
+现在服务把该属性声明为就绪信号。某个 vendor 助手失败或一直不就绪时，只记录到
+内核日志并跳过，不再阻止它后面的所有服务。这一改动仍待真机验证，见 TODO。
 
 ## 9. A-only 机型
 

@@ -6,9 +6,10 @@
 
 - [ ] **WLAN**：MediaTek 栈已经能启动（`wmt_loader`、`wmt_launcher`、
       `wlan_assistant`），内核日志出现 `WLAN-GEN4 driver init`，但没有下载固件，
-      `wlan0` 始终不出现。现在 launcher 会设置
-      `vendor.connsys.formeta.ready=yes`，assistant 等它之后再写 NVRAM 和
-      `WIFI`；还需要在真机上验证。
+      `wlan0` 始终不出现。缺失的一步是手机自己的 WLAN HAL：`libwifi-hal-mtk.so`
+      会向 `/dev/wmtWifi` 写入 `"1"` 来启动驱动。现在 recovery 在 assistant 报告
+      `vendor.mtk.nvram.ready=1` 之后自己写入，并且某个 vendor 助手失败不再阻止
+      后续服务。还需要在真机上验证。
 - [ ] **振动**：马达是 MediaTek 的 LED class 设备
       `/sys/class/leds/vibrator`，`[haptics]` 现在通过 `duration` 和 `activate`
       驱动它。需要在真机上验证（一次点击 15–30 ms）。
@@ -19,7 +20,7 @@
 
 ## 界面
 
-- [x] **时钟位置**：已移到距左侧 40 dp，避开 merlinx 左上角的摄像头挖孔。
+- [x] **时钟位置**：已移到距左侧 50 dp，避开 merlinx 左上角的摄像头挖孔。
 - [x] 在 `crates/skyward-ui/src/app.rs` 的 `TIME_ZONES` 中加入
       **Asia/Singapore**，并补充测试。
 
