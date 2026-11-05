@@ -809,8 +809,9 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>, runtime: Option<&Run
             bail!("wpa_supplicant ended as it started: {status}; {}", last_lines(&log, 20));
         }
         if Instant::now() >= until {
+            let waiting = blocked(&child);
             end(&mut child, None);
-            bail!("wpa_supplicant opened no control socket in {} seconds; {}", SOCKET_WAIT.as_secs(), last_lines(&log, 20));
+            bail!("wpa_supplicant opened no control socket in {} seconds; {waiting}; {}", SOCKET_WAIT.as_secs(), last_lines(&log, 20));
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -822,6 +823,17 @@ fn last_lines(path: &Path, count: usize) -> String {
     let text = fs::read_to_string(path).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(count)..].join(" | ")
+}
+
+/// Where a program is waiting, as the kernel tells it, for when it does not
+/// come up: the kernel function it waits in and its stack, and its own
+/// command line so the process can be told from another.
+fn blocked(child: &Child) -> String {
+    let pid = child.id();
+    let read = |name: &str| fs::read_to_string(format!("/proc/{pid}/{name}")).unwrap_or_default();
+    let wchan = read("wchan").trim().to_string();
+    let stack = read("stack").replace('\n', " | ");
+    format!("pid {pid} waiting at {wchan}: {stack}")
 }
 
 /// End the supplicant: asked to, where it can be, and killed after a while.
